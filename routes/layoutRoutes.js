@@ -1,6 +1,6 @@
 import express from 'express';
 import PageLayout from '../models/PageLayout.js';
-import { adminAuth } from '../middleware/auth.js';
+import { auth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -14,8 +14,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Replace all sections (admin only)
-router.put('/', adminAuth, async (req, res) => {
+// Replace all sections (any authenticated user)
+router.put('/', auth, async (req, res) => {
   try {
     const { sections } = req.body || {};
     if (!Array.isArray(sections)) {
