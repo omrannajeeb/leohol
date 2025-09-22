@@ -2,12 +2,45 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 
+export const promoteToAdmin = async (req, res) => {
+  try {
+    const { email, secret } = req.body || {};
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    // Allow promotion if:
+    // 1) No admin exists yet (bootstrap scenario), OR
+    // 2) A valid secret token is provided matching ADMIN_SETUP_TOKEN
+    const hasAdmin = await User.exists({ role: 'admin' });
+    const configuredSecret = process.env.ADMIN_SETUP_TOKEN || '';
+    const secretOk = configuredSecret && secret && String(secret) === String(configuredSecret);
+
+    if (!secretOk && hasAdmin) {
+      return res.status(403).json({ message: 'Admin already exists. Provide valid secret to promote.' });
+    }
+
+    const user = await User.findOne({ email: String(email).toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.role = 'admin';
+    await user.save();
+    return res.json({ ok: true, id: user._id, email: user.email, role: user.role });
+  } catch (e) {
+    console.error('promoteToAdmin error:', e);
+    return res.status(500).json({ message: 'Failed to promote user' });
+  }
+};
+
 export const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+  const { name, email, password } = req.body;
+  const normalizedEmail = String(email || '').toLowerCase();
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+  const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
@@ -15,7 +48,7 @@ export const register = async (req, res) => {
     // Create new user
     const user = new User({
       name,
-      email,
+      email: normalizedEmail,
       password,
       role: 'user' // Default role
     });
@@ -47,10 +80,11 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
+  const normalizedEmail = String(email || '').toLowerCase();
     
     // Find user
-    const user = await User.findOne({ email });
+  const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
