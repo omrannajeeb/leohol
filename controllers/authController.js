@@ -134,3 +134,15 @@ export const getCurrentUser = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+export const isAdmin = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('email role');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    return res.json({ isAdmin: user.role === 'admin', email: user.email, role: user.role });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to check admin status' });
+  }
+};
