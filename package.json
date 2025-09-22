@@ -13,7 +13,9 @@
     "preview": "vite preview",
     "server": "node index.js",
     "start": "node server/index.js",
-    "gen:vapid": "node server/scripts/genVapid.js"
+    "gen:vapid": "node server/scripts/genVapid.js",
+    "migrate:brands:dry": "node server/scripts/migrateBrandImagesToCloudinary.js",
+    "migrate:brands:apply": "node server/scripts/migrateBrandImagesToCloudinary.js --apply"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^16.5.0",
