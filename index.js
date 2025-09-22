@@ -49,7 +49,45 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const app = express();
 
 // Middleware
-app.use(cors());
+// Hardened CORS configuration: explicitly allow known storefront/admin origins and handle preflight
+const defaultAllowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  'https://relaxed-cucurucho-360448.netlify.app',
+  // Self origin (Render) – harmless for health checks and internal tools
+  'https://leohol.onrender.com'
+];
+
+// Allow override via env (comma-separated list)
+const envOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const allowedOrigins = envOrigins.length ? envOrigins : defaultAllowedOrigins;
+
+const corsOptions = {
+  origin: function(origin, callback) {
+    // Allow non-browser requests (no origin) like curl/health checks
+    if (!origin) return callback(null, true);
+    // Allow any Netlify preview/production subdomain if desired
+    const isNetlify = /\.netlify\.app$/i.test(origin) || /\.netlify\.live$/i.test(origin);
+    if (allowedOrigins.includes(origin) || isNetlify) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  // We use Authorization header (no cookies); credentials not required. Keep false so ACAO can be '*'.
+  credentials: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 // Serve static for service worker if behind express (especially in production)
 app.use(express.static(path.resolve(__dirname, '../public')));
