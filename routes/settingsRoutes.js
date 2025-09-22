@@ -334,8 +334,6 @@ router.put('/payments/paypal', adminAuth, async (req, res) => {
   }
 });
 
-router.post('/payments/paypal/test', adminAuth, async (req, res) => {
-  try {
 // Checkout form customization endpoints
 router.get('/checkout', async (req, res) => {
   try {
@@ -375,6 +373,9 @@ router.put('/checkout', adminAuth, async (req, res) => {
   }
 });
 
+// PayPal config test endpoint
+router.post('/payments/paypal/test', adminAuth, async (req, res) => {
+  try {
     let settings = await Settings.findOne();
     if (!settings || !settings.payments || !settings.payments.paypal || !settings.payments.paypal.clientId || !settings.payments.paypal.secret) {
       return res.status(400).json({ ok: false, message: 'Missing PayPal credentials' });
