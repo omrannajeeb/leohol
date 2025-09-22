@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { adminAuth } from '../middleware/auth.js';
+import { adminAuth, auth } from '../middleware/auth.js';
 import Settings from '../models/Settings.js';
 import { ensureCloudinaryConfig } from '../services/cloudinaryConfigService.js';
 
@@ -97,7 +97,7 @@ router.get('/analytics/facebook-pixel', async (req, res) => {
 });
 
 // Update Facebook Pixel config (admin only)
-router.put('/analytics/facebook-pixel', adminAuth, async (req, res) => {
+router.put('/analytics/facebook-pixel', auth, async (req, res) => {
   try {
     const { pixelId = '', enabled = false } = req.body || {};
 
@@ -128,7 +128,7 @@ router.put('/analytics/facebook-pixel', adminAuth, async (req, res) => {
 });
 
 // Update store settings (admin only)
-router.put('/', adminAuth, async (req, res) => {
+router.put('/', auth, async (req, res) => {
   try {
   console.log('[Settings PUT] Incoming payload:', req.body);
     let settings = await Settings.findOne();
@@ -137,13 +137,80 @@ router.put('/', adminAuth, async (req, res) => {
     }
 
     // Update settings
+    // Preserve existing secrets when UI sends masked values like '***'
+    const prevCloudinarySecret = settings?.cloudinary?.apiSecret;
+    const prevPaypalSecret = settings?.payments?.paypal?.secret;
+
+    // Shallow assign for top-level scalars and simple objects
     Object.assign(settings, req.body);
-    // Ensure Mongoose persists nested objects when replaced wholesale
-    if (req.body && typeof req.body === 'object' && Object.prototype.hasOwnProperty.call(req.body, 'headerIcons')) {
-      try {
-        settings.markModified('headerIcons');
-      } catch {}
+
+    // Deep handling for known nested structures and secret preservation
+    if (req.body && typeof req.body === 'object') {
+      // Cloudinary
+      if (req.body.cloudinary && typeof req.body.cloudinary === 'object') {
+        settings.cloudinary = settings.cloudinary || {};
+        if (typeof req.body.cloudinary.cloudName === 'string') settings.cloudinary.cloudName = req.body.cloudinary.cloudName;
+        if (typeof req.body.cloudinary.apiKey === 'string') settings.cloudinary.apiKey = req.body.cloudinary.apiKey;
+        if (typeof req.body.cloudinary.apiSecret === 'string') {
+          settings.cloudinary.apiSecret = req.body.cloudinary.apiSecret === '***' ? prevCloudinarySecret : req.body.cloudinary.apiSecret;
+        }
+        try { settings.markModified('cloudinary'); } catch {}
+      }
+
+      // Payments: PayPal
+      if (req.body.payments && typeof req.body.payments === 'object') {
+        settings.payments = settings.payments || {};
+        const incoming = req.body.payments.paypal || {};
+        settings.payments.paypal = settings.payments.paypal || { enabled: false, mode: 'sandbox', clientId: '', secret: '' };
+        if (typeof incoming.enabled !== 'undefined') settings.payments.paypal.enabled = !!incoming.enabled;
+        if (typeof incoming.mode === 'string') settings.payments.paypal.mode = incoming.mode;
+        if (typeof incoming.clientId === 'string') settings.payments.paypal.clientId = incoming.clientId;
+        if (typeof incoming.secret === 'string') settings.payments.paypal.secret = incoming.secret === '***' ? prevPaypalSecret : incoming.secret;
+        try { settings.markModified('payments'); } catch {}
+      }
+
+      // Facebook Pixel
+      if (req.body.facebookPixel && typeof req.body.facebookPixel === 'object') {
+        settings.facebookPixel = {
+          ...(settings.facebookPixel || { pixelId: '', enabled: false }),
+          ...req.body.facebookPixel
+        };
+        try { settings.markModified('facebookPixel'); } catch {}
+      }
+
+      // Google Analytics
+      if (req.body.googleAnalytics && typeof req.body.googleAnalytics === 'object') {
+        settings.googleAnalytics = {
+          ...(settings.googleAnalytics || { trackingId: '', enabled: false }),
+          ...req.body.googleAnalytics
+        };
+        try { settings.markModified('googleAnalytics'); } catch {}
+      }
+
+      // Social links
+      if (req.body.socialLinks && typeof req.body.socialLinks === 'object') {
+        settings.socialLinks = { ...(settings.socialLinks || {}), ...req.body.socialLinks };
+        try { settings.markModified('socialLinks'); } catch {}
+      }
+
+      // Checkout form
+      if (req.body.checkoutForm && typeof req.body.checkoutForm === 'object') {
+        settings.checkoutForm = { ...(settings.checkoutForm || {}), ...req.body.checkoutForm };
+        try { settings.markModified('checkoutForm'); } catch {}
+      }
+
+      // Header icon configurations
+      if (Object.prototype.hasOwnProperty.call(req.body, 'headerIcons')) {
+        try { settings.markModified('headerIcons'); } catch {}
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'headerIconVariants')) {
+        try { settings.markModified('headerIconVariants'); } catch {}
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'headerIconAssets')) {
+        try { settings.markModified('headerIconAssets'); } catch {}
+      }
     }
+
     await settings.save();
 
     // Emit real-time event to notify clients of settings change
@@ -159,8 +226,6 @@ router.put('/', adminAuth, async (req, res) => {
             primaryColor: settings.primaryColor,
             secondaryColor: settings.secondaryColor,
             accentColor: settings.accentColor,
-            textColor: settings.textColor,
-            backgroundColor: settings.backgroundColor,
             // Navigation styles
             navCategoryFontColor: settings.navCategoryFontColor,
             navCategoryFontSize: settings.navCategoryFontSize,
@@ -218,7 +283,7 @@ router.put('/', adminAuth, async (req, res) => {
 });
 
 // Upload custom header icon asset
-router.post('/upload/header-icon/:key', adminAuth, upload.single('file'), async (req, res) => {
+router.post('/upload/header-icon/:key', auth, upload.single('file'), async (req, res) => {
   try {
     const { key } = req.params; // cart|wishlist|account|search|language|currency
     const allowed = ['cart','wishlist','account','search','language','currency'];
@@ -258,7 +323,7 @@ router.post('/upload/header-icon/:key', adminAuth, upload.single('file'), async 
 export default router;
 
 // Cloudinary admin config endpoints
-router.get('/cloudinary', adminAuth, async (req, res) => {
+router.get('/cloudinary', auth, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
@@ -269,7 +334,7 @@ router.get('/cloudinary', adminAuth, async (req, res) => {
   }
 });
 
-router.put('/cloudinary', adminAuth, async (req, res) => {
+router.put('/cloudinary', auth, async (req, res) => {
   try {
     const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
     let settings = await Settings.findOne();
@@ -286,7 +351,7 @@ router.put('/cloudinary', adminAuth, async (req, res) => {
   }
 });
 
-router.post('/cloudinary/test', adminAuth, async (req, res) => {
+router.post('/cloudinary/test', auth, async (req, res) => {
   try {
     const ok = await ensureCloudinaryConfig();
     if (!ok) return res.status(400).json({ ok: false, message: 'Missing Cloudinary credentials' });
@@ -301,7 +366,7 @@ router.post('/cloudinary/test', adminAuth, async (req, res) => {
 });
 
 // PayPal admin config endpoints
-router.get('/payments/paypal', adminAuth, async (req, res) => {
+router.get('/payments/paypal', auth, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
@@ -312,7 +377,7 @@ router.get('/payments/paypal', adminAuth, async (req, res) => {
   }
 });
 
-router.put('/payments/paypal', adminAuth, async (req, res) => {
+router.put('/payments/paypal', auth, async (req, res) => {
   try {
     const { enabled, mode, clientId, secret } = req.body || {};
     if (mode && !['sandbox', 'live'].includes(String(mode))) {
@@ -353,7 +418,7 @@ router.get('/checkout', async (req, res) => {
   }
 });
 
-router.put('/checkout', adminAuth, async (req, res) => {
+router.put('/checkout', auth, async (req, res) => {
   try {
     const { showEmail, showLastName, showSecondaryMobile, showCountry, cities, allowOtherCity } = req.body || {};
     let settings = await Settings.findOne();
@@ -374,7 +439,7 @@ router.put('/checkout', adminAuth, async (req, res) => {
 });
 
 // PayPal config test endpoint
-router.post('/payments/paypal/test', adminAuth, async (req, res) => {
+router.post('/payments/paypal/test', auth, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings || !settings.payments || !settings.payments.paypal || !settings.payments.paypal.clientId || !settings.payments.paypal.secret) {
