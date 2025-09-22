@@ -365,8 +365,8 @@ router.post('/cloudinary/test', auth, async (req, res) => {
   }
 });
 
-// PayPal admin config endpoints
-router.get('/payments/paypal', auth, async (req, res) => {
+// PayPal config endpoint (public: returns only non-sensitive fields)
+router.get('/payments/paypal', async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
