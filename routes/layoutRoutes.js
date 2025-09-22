@@ -1,6 +1,6 @@
 import express from 'express';
 import PageLayout from '../models/PageLayout.js';
-import { auth } from '../middleware/auth.js';
+import { auth, adminAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -14,8 +14,13 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Replace all sections (any authenticated user)
-router.put('/', auth, async (req, res) => {
+// Determine required guard for updates: admin-only by default in production, configurable via env
+const requireAdminEnv = String(process.env.LAYOUT_UPDATE_REQUIRE_ADMIN ?? (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase();
+const REQUIRE_ADMIN = ['1','true','yes','on'].includes(requireAdminEnv);
+const updateGuard = REQUIRE_ADMIN ? adminAuth : auth;
+
+// Replace all sections (guarded)
+router.put('/', updateGuard, async (req, res) => {
   try {
     const { sections } = req.body || {};
     if (!Array.isArray(sections)) {
