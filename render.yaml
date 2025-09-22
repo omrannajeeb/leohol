@@ -1,0 +1,30 @@
+# Render Infrastructure as Code
+# This config deploys the Node.js API from the correct subfolder.
+
+services:
+  - type: web
+    name: leo-victory-api
+    env: node
+    # IMPORTANT: The repository's server lives under the "project" folder.
+    # Setting rootDir here prevents "Service Root Directory ... is missing" errors.
+    rootDir: project
+    buildCommand: npm install
+    startCommand: node server/index.js
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      # Add your environment variables in Render dashboard or extend here as needed, e.g.:
+      # - key: MONGODB_URI
+      #   sync: false
+
+# If you also want to deploy the Vite frontend on Render (optional), you could add
+# another service of type "static" pointing at the same rootDir and publish the "dist" folder
+# after running "npm run build". Example (commented out):
+#  - type: web
+#    name: leo-victory-web
+#    env: static
+#    rootDir: project
+#    buildCommand: npm ci && npm run build
+#    staticPublishPath: dist
