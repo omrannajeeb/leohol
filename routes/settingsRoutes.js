@@ -29,6 +29,10 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// Optional: allow non-admins to edit general settings when ALLOW_NON_ADMIN_SETTINGS=1
+// This is intended for development only. Sensitive endpoints remain admin-only.
+const settingsWriteGuard = process.env.ALLOW_NON_ADMIN_SETTINGS === '1' ? auth : adminAuth;
+
 // Get store settings
 router.get('/', async (req, res) => {
   try {
@@ -96,8 +100,8 @@ router.get('/analytics/facebook-pixel', async (req, res) => {
   }
 });
 
-// Update Facebook Pixel config (admin only)
-router.put('/analytics/facebook-pixel', auth, async (req, res) => {
+// Update Facebook Pixel config (guarded; can be relaxed via env)
+router.put('/analytics/facebook-pixel', settingsWriteGuard, async (req, res) => {
   try {
     const { pixelId = '', enabled = false } = req.body || {};
 
@@ -127,8 +131,8 @@ router.put('/analytics/facebook-pixel', auth, async (req, res) => {
   }
 });
 
-// Update store settings (admin only)
-router.put('/', auth, async (req, res) => {
+// Update store settings (guarded; can be relaxed via env)
+router.put('/', settingsWriteGuard, async (req, res) => {
   try {
   console.log('[Settings PUT] Incoming payload:', req.body);
     let settings = await Settings.findOne();
@@ -282,8 +286,8 @@ router.put('/', auth, async (req, res) => {
   }
 });
 
-// Upload custom header icon asset
-router.post('/upload/header-icon/:key', auth, upload.single('file'), async (req, res) => {
+// Upload custom header icon asset (admin only)
+router.post('/upload/header-icon/:key', adminAuth, upload.single('file'), async (req, res) => {
   try {
     const { key } = req.params; // cart|wishlist|account|search|language|currency
     const allowed = ['cart','wishlist','account','search','language','currency'];
@@ -323,7 +327,8 @@ router.post('/upload/header-icon/:key', auth, upload.single('file'), async (req,
 export default router;
 
 // Cloudinary admin config endpoints
-router.get('/cloudinary', auth, async (req, res) => {
+// Cloudinary settings are sensitive; admin only
+router.get('/cloudinary', adminAuth, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
@@ -334,7 +339,7 @@ router.get('/cloudinary', auth, async (req, res) => {
   }
 });
 
-router.put('/cloudinary', auth, async (req, res) => {
+router.put('/cloudinary', adminAuth, async (req, res) => {
   try {
     const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
     let settings = await Settings.findOne();
@@ -351,7 +356,7 @@ router.put('/cloudinary', auth, async (req, res) => {
   }
 });
 
-router.post('/cloudinary/test', auth, async (req, res) => {
+router.post('/cloudinary/test', adminAuth, async (req, res) => {
   try {
     const ok = await ensureCloudinaryConfig();
     if (!ok) return res.status(400).json({ ok: false, message: 'Missing Cloudinary credentials' });
@@ -377,7 +382,8 @@ router.get('/payments/paypal', async (req, res) => {
   }
 });
 
-router.put('/payments/paypal', auth, async (req, res) => {
+// Updating PayPal credentials should be admin-only
+router.put('/payments/paypal', adminAuth, async (req, res) => {
   try {
     const { enabled, mode, clientId, secret } = req.body || {};
     if (mode && !['sandbox', 'live'].includes(String(mode))) {
@@ -418,7 +424,8 @@ router.get('/checkout', async (req, res) => {
   }
 });
 
-router.put('/checkout', auth, async (req, res) => {
+// Update checkout form (guarded; can be relaxed via env)
+router.put('/checkout', settingsWriteGuard, async (req, res) => {
   try {
     const { showEmail, showLastName, showSecondaryMobile, showCountry, cities, allowOtherCity } = req.body || {};
     let settings = await Settings.findOne();
@@ -439,7 +446,7 @@ router.put('/checkout', auth, async (req, res) => {
 });
 
 // PayPal config test endpoint
-router.post('/payments/paypal/test', auth, async (req, res) => {
+router.post('/payments/paypal/test', adminAuth, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings || !settings.payments || !settings.payments.paypal || !settings.payments.paypal.clientId || !settings.payments.paypal.secret) {
