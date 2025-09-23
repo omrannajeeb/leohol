@@ -74,6 +74,13 @@ const corsOptions = {
     if (!origin) return callback(null, true);
     // Allow any Netlify preview/production subdomain if desired
     const isNetlify = /\.netlify\.app$/i.test(origin) || /\.netlify\.live$/i.test(origin);
+    // Allow any localhost/127.0.0.1 origin regardless of port for development
+    try {
+      const u = new URL(origin);
+      if (['localhost', '127.0.0.1', '::1'].includes(u.hostname)) {
+        return callback(null, true);
+      }
+    } catch {}
     if (allowedOrigins.includes(origin) || isNetlify) {
       return callback(null, true);
     }
