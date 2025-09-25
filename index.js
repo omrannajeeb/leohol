@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { errorHandler } from './middleware/errorHandler.js';
+import cspMiddleware from './middleware/csp.js';
 
 // Route Imports
 import userRoutes from './routes/userRoutes.js';
@@ -95,6 +96,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+// Apply Content Security Policy middleware
+app.use(cspMiddleware);
+
 app.use(express.json());
 // Serve static for service worker if behind express (especially in production)
 app.use(express.static(path.resolve(__dirname, '../public')));
