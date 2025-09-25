@@ -103,8 +103,15 @@ app.use(cspMiddleware);
 app.use(express.json());
 // Serve static for service worker if behind express (especially in production)
 app.use(express.static(path.resolve(__dirname, '../public')));
-// Serve uploaded files
-app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
+
+// Serve uploaded files with CORS headers to prevent CORB issues
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.resolve(__dirname, '../uploads')));
 
 // MongoDB connection handled by dbManager service
 
