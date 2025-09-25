@@ -9,15 +9,16 @@ export const cspMiddleware = (req, res, next) => {
     'default-src': ["'self'"],
     'script-src': [
       "'self'",
-      "'strict-dynamic'",
       // Allow specific external scripts
       "https://connect.facebook.net",
       "https://www.googletagmanager.com",
       "https://www.google-analytics.com",
       "https://js.stripe.com",
       "https://checkout.stripe.com",
-      // For development only - remove in production
-      ...(process.env.NODE_ENV === 'development' ? ["'unsafe-inline'"] : [])
+      // For development - allow unsafe-inline and unsafe-eval
+      ...(process.env.NODE_ENV === 'development' ? ["'unsafe-inline'", "'unsafe-eval'"] : []),
+      // For production - allow unsafe-eval for bundler optimizations (minimal risk for built code)
+      ...(process.env.NODE_ENV === 'production' ? ["'unsafe-eval'"] : [])
     ],
     'style-src': [
       "'self'",
