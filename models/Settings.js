@@ -34,10 +34,23 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Logo sizing (persisted so guests see admin changes)
+  logoWidthMobile: {
+    type: Number,
+    default: 56 // px
+  },
+  logoMaxHeightMobile: {
+    type: Number,
+    default: 40 // px
+  },
+  logoWidthDesktop: {
+    type: Number,
+    default: 100 // px
+  },
   // Backend API base URL (e.g., https://api.example.com). Defaults to local dev server.
   apiBaseUrl: {
     type: String,
-    default: 'https://leohol.onrender.com'
+    default: 'http://localhost:5000'
   },
   
   // Design/Theme settings
@@ -603,7 +616,7 @@ settingsSchema.statics.createDefaultSettings = async function() {
       }
       // Ensure apiBaseUrl field exists
       if (typeof settings.apiBaseUrl === 'undefined') {
-        updateData.apiBaseUrl = 'https://leohol.onrender.com';
+        updateData.apiBaseUrl = 'http://localhost:5000';
         needsUpdate = true;
       }
       // Ensure payments.paypal exists
