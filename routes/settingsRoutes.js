@@ -256,6 +256,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             primaryColor: settings.primaryColor,
             secondaryColor: settings.secondaryColor,
             accentColor: settings.accentColor,
+            searchBorderColor: settings.searchBorderColor,
             // Navigation styles
             navCategoryFontColor: settings.navCategoryFontColor,
             navCategoryFontSize: settings.navCategoryFontSize,
