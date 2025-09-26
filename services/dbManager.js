@@ -4,13 +4,32 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
 
-// Resolve .env path to project/.env (server/index.js loads ../.env from server)
+// Resolve .env path(s). Original intent was project/.env two levels up.
+// Current repository has a .env under server/.env; if project/.env does not exist
+// we fall back gracefully so updates there are picked up.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ENV_PATH = path.resolve(__dirname, '../../.env');
 
-// Load env once
+const envCandidatePaths = [
+  path.resolve(__dirname, '../../.env'), // project/.env (preferred canonical location)
+  path.resolve(__dirname, '../.env'),    // server/.env (one level up from services)
+];
+
+let ENV_PATH = envCandidatePaths[0];
+for (const p of envCandidatePaths) {
+  if (fs.existsSync(p)) {
+    ENV_PATH = p;
+    break;
+  }
+}
+
+// Load env once from the resolved path
 dotenv.config({ path: ENV_PATH });
+
+// Optional debug (enable by setting DEBUG_ENV=1) to help diagnose wrong DB usage
+if (process.env.DEBUG_ENV === '1') {
+  console.log('[dbManager] Loaded environment from', ENV_PATH);
+}
 
 let currentUri = process.env.MONGODB_URI || '';
 let status = {
