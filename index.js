@@ -49,9 +49,6 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 
-// Flag indicating DB readiness; used to short‑circuit API requests during cold start
-let DATABASE_READY = false;
-
 // Middleware
 // Lightweight request logging & version header
 let APP_VERSION = process.env.APP_VERSION || '';
@@ -126,15 +123,6 @@ app.options('*', cors(corsOptions));
 app.use(cspMiddleware);
 
 app.use(express.json());
-
-// During startup (before DB ready) respond with 503 for API requests to avoid long mongoose buffering.
-// Set ALLOW_DBLESS=1 to bypass (useful for local dev with mocked data).
-app.use((req, res, next) => {
-  if (!DATABASE_READY && !process.env.ALLOW_DBLESS && req.path.startsWith('/api')) {
-    return res.status(503).json({ message: 'Service warming up – database not connected yet' });
-  }
-  next();
-});
 // Serve static for service worker if behind express (especially in production)
 app.use(express.static(path.resolve(__dirname, '../public')));
 
@@ -291,14 +279,12 @@ const startServer = async () => {
     console.error('Database connection failed after retries:', e.message);
   }
   if (!conn) {
-    console.error('Database connection failed; continuing in degraded mode so platform can perform health checks.');
-    console.error('Add MONGODB_URI environment variable and redeploy if missing. Requests to /api/* will return 503.');
-  } else {
-    DATABASE_READY = true;
+    console.error('Database connection failed; server not started. Set SKIP_DB=1 to bypass during development.');
+    return;
   }
 
   // Initialize default data after database connection is established
-  if (DATABASE_READY) try {
+  try {
     // Import and run data initialization
     const User = (await import('./models/User.js')).default;
     const Settings = (await import('./models/Settings.js')).default;
@@ -332,21 +318,12 @@ const startServer = async () => {
     console.error('❌ Error during data initialization:', error.message);
   }
 
-  // Inject broadcaster and start real-time services only after DB is ready
-  try {
-    const { setBroadcaster, startRealTimeEventService } = await import('./services/realTimeEventService.js');
-    setBroadcaster(broadcastToClients);
-    if (DATABASE_READY) startRealTimeEventService();
-  } catch (e) {
-    console.error('Real-time service initialization skipped:', e.message);
-  }
+  // Start real-time services after everything is initialized
+  import('./services/realTimeEventService.js');
 
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`WebSocket server running on ws://localhost:${PORT}/ws`);
-    if (!DATABASE_READY) {
-      console.warn('Server is running WITHOUT a database connection (degraded mode).');
-    }
   });
 };
 
