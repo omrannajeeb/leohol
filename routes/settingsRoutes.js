@@ -275,6 +275,11 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             address: settings.address,
             email: settings.email,
             name: settings.name,
+            // Added logo & logo sizing so all clients update immediately when admin changes logo
+            logo: settings.logo,
+            logoWidthMobile: settings.logoWidthMobile,
+            logoMaxHeightMobile: settings.logoMaxHeightMobile,
+            logoWidthDesktop: settings.logoWidthDesktop,
           }
         });
       }
