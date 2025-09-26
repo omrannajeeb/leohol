@@ -50,6 +50,28 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const app = express();
 
 // Middleware
+// Lightweight request logging & version header
+let APP_VERSION = process.env.APP_VERSION || '';
+try {
+  if (!APP_VERSION) {
+    // Attempt to read version from package.json one directory up
+    const pkg = await import(path.resolve(__dirname, '../package.json'), { assert: { type: 'json' } }).catch(() => null);
+    APP_VERSION = pkg?.default?.version || '0.0.0-dev';
+  }
+} catch {}
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  const authHeader = req.header('Authorization');
+  // Defer logging until response finished
+  res.setHeader('X-App-Version', APP_VERSION);
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const user = req.user ? `${req.user._id}:${req.user.role}` : 'anon';
+    console.log(`REQ ${req.method} ${req.originalUrl} -> ${res.statusCode} ${duration}ms auth=${authHeader? 'y':'n'} user=${user}`);
+  });
+  next();
+});
 // Hardened CORS configuration: explicitly allow known storefront/admin origins and handle preflight
 const defaultAllowedOrigins = [
   'http://localhost:5173',
