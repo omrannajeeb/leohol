@@ -95,6 +95,22 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+// Lightweight version endpoint for polling (no secrets, minimal payload)
+router.get('/version', async (req, res) => {
+  try {
+    let settings = await Settings.findOne().select('_id updatedAt logo logoWidthMobile logoMaxHeightMobile logoWidthDesktop');
+    if (!settings) {
+      settings = await Settings.create({});
+    }
+    const updatedAt = settings.updatedAt instanceof Date ? settings.updatedAt : new Date();
+    // Version can be milliseconds timestamp; easy to compare client-side
+    const version = updatedAt.getTime();
+    res.json({ version, updatedAt: updatedAt.toISOString() });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get Facebook Pixel config
 router.get('/analytics/facebook-pixel', async (req, res) => {
   try {
