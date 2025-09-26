@@ -36,6 +36,16 @@ const settingsWriteGuard = process.env.ALLOW_NON_ADMIN_SETTINGS === '1' ? auth :
 // Get store settings
 router.get('/', async (req, res) => {
   try {
+    console.log('[GET /api/settings] incoming', {
+      time: new Date().toISOString(),
+      ip: req.ip,
+      ua: req.headers['user-agent'],
+      auth: req.header('Authorization') ? 'present' : 'none',
+      origin: req.headers.origin || '',
+      referer: req.headers.referer || ''
+    });
+  } catch {}
+  try {
     let settings = await Settings.findOne();
     if (!settings) {
       settings = await Settings.create({});
