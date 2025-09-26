@@ -66,6 +66,11 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: '#f59e0b' // Amber
   },
+  // Search box border color (optional) – allows theming search input outline
+  searchBorderColor: {
+    type: String,
+    default: ''
+  },
   textColor: {
     type: String,
     default: '#1f2937' // Gray 800
@@ -555,6 +560,7 @@ settingsSchema.statics.createDefaultSettings = async function() {
       ensureField('navPanelColumnActiveBgColor', '');
       ensureField('navPanelAccentColor', '');
       ensureField('navPanelHeaderColor', '');
+  ensureField('searchBorderColor', '');
   // Ensure scroll-to-top fields exist
   ensureField('scrollTopBgColor', '');
   ensureField('scrollTopTextColor', '');
