@@ -45,6 +45,11 @@ const productSchema = new mongoose.Schema({
     ref: 'Category',
     required: [true, 'Product category is required']
   },
+  // Additional categories (multi-category support). Primary category remains in `category` for backward compatibility.
+  categories: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category'
+  }],
   colors: [{
     name: {
       type: String,
@@ -132,6 +137,49 @@ const productSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Product'
   }]
+  ,
+  // Product Add-ons (upsell items shown on product page)
+  addOns: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'
+  }],
+  // Active/Inactive (soft delete) status
+  isActive: {
+    type: Boolean,
+    default: true,
+    index: true
+  },
+  // SEO & Marketing
+  slug: {
+    type: String,
+    unique: true,
+    sparse: true,
+    index: true
+  },
+  metaTitle: { type: String },
+  metaDescription: { type: String },
+  metaKeywords: [{ type: String }],
+  ogTitle: { type: String },
+  ogDescription: { type: String },
+  ogImage: { type: String },
+  // Per-product size guide (دليل المقاسات)
+  sizeGuide: {
+    // Optional title (e.g., "Men's Shirts")
+    title: { type: String },
+    // Unit system: 'cm' | 'in'
+    unit: { type: String, enum: ['cm', 'in'], default: 'cm' },
+    // Table rows: each row corresponds to a size label and measurement columns
+    rows: [{
+      size: { type: String, required: true },
+      chest: { type: Number },
+      waist: { type: Number },
+      hip: { type: Number },
+      length: { type: Number },
+      sleeve: { type: Number }
+    }],
+    // Extra notes / how to measure text
+    note: { type: String }
+  }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -155,11 +203,46 @@ productSchema.pre('save', function(next) {
 });
 
 // Pre-save middleware to update total stock
+// Recompute aggregate stock from nested colors.sizes each save
 productSchema.pre('save', function(next) {
-  if (this.sizes && this.sizes.length > 0) {
-    this.stock = this.sizes.reduce((total, size) => total + size.stock, 0);
+  if (this.colors && this.colors.length > 0) {
+    const total = this.colors.reduce((sum, color) => {
+      if (color.sizes && color.sizes.length) {
+        return sum + color.sizes.reduce((s, sz) => s + (sz.stock || 0), 0);
+      }
+      return sum;
+    }, 0);
+    this.stock = total;
   }
   next();
+});
+
+// Slug generation / normalization
+productSchema.pre('save', async function(next) {
+  try {
+    if (!this.isModified('name') && this.slug) return next();
+    // Basic slugify: lowercase, remove diacritics, spaces -> '-', keep alphanum & dashes
+    const base = (this.slug || this.name || '')
+      .toString()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+    if (!base) return next();
+    let candidate = base;
+    let i = 1;
+    while (await mongoose.models.Product.findOne({ slug: candidate, _id: { $ne: this._id } })) {
+      candidate = `${base}-${i++}`;
+      if (i > 50) break; // safety cap
+    }
+    this.slug = candidate;
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default mongoose.model('Product', productSchema);
