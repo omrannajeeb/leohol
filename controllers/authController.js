@@ -27,7 +27,7 @@ export const promoteToAdmin = async (req, res) => {
 
     user.role = 'admin';
     await user.save();
-    return res.json({ ok: true, id: user._id, email: user.email, role: user.role });
+  return res.json({ ok: true, id: user._id, email: user.email, role: user.role, image: user.image || null });
   } catch (e) {
     console.error('promoteToAdmin error:', e);
     return res.status(500).json({ message: 'Failed to promote user' });
@@ -69,7 +69,8 @@ export const register = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        image: user.image || null
       }
     });
   } catch (error) {
@@ -109,7 +110,8 @@ export const login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        image: user.image || null
       }
     });
   } catch (error) {
@@ -128,7 +130,8 @@ export const getCurrentUser = async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
-      role: user.role
+      role: user.role,
+      image: user.image || null
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
