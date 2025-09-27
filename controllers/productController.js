@@ -132,9 +132,14 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: 'Invalid product data', errors });
     }
 
-    // Create product storing provided price directly (assumed store currency)
+    // Normalize video URLs if provided (filter out empty strings)
+    let videoUrls = Array.isArray(req.body.videoUrls) ? req.body.videoUrls.filter(v => typeof v === 'string' && v.trim()) : [];
+    // Basic length cap to prevent abuse
+    if (videoUrls.length > 8) videoUrls = videoUrls.slice(0, 8);
+
     const product = new Product({
       ...req.body,
+      videoUrls,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
     });
     const savedProduct = await product.save();
@@ -183,10 +188,20 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   try {
-    const { sizes, colors, ...updateData } = req.body;
+  const { sizes, colors, videoUrls: incomingVideoUrls, ...updateData } = req.body;
 
     // Sanitize and normalize incoming fields
     const updateDataSanitized = { ...updateData };
+
+    if (incomingVideoUrls !== undefined) {
+      if (!Array.isArray(incomingVideoUrls)) {
+        return res.status(400).json({ message: 'videoUrls must be an array of strings' });
+      }
+      const cleaned = incomingVideoUrls
+        .filter(v => typeof v === 'string' && v.trim())
+        .slice(0, 8); // enforce max 8
+      updateDataSanitized.videoUrls = cleaned;
+    }
 
     // Coerce numeric fields if provided as strings
     if (updateDataSanitized.price != null) {
