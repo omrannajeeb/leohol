@@ -331,23 +331,48 @@ export const deleteProduct = async (req, res) => {
 // Search products
 export const searchProducts = async (req, res) => {
   try {
-  const { query } = req.query;
-    
+    let { query } = req.query;
+
+    // Basic sanitization
+    if (typeof query !== 'string') query = '';
+    query = query.trim();
+
     if (!query) {
       return res.json([]);
     }
 
-    const products = await Product.find({
-      $or: [
-        { name: { $regex: query, $options: 'i' } },
-        { description: { $regex: query, $options: 'i' } },
-        { category: { $regex: query, $options: 'i' } }
-      ]
-    })
-    .select('name price images category')
-    .limit(12)
-    .sort('-createdAt');
+    // Prevent excessively long regex causing performance issues
+    if (query.length > 64) {
+      query = query.slice(0, 64);
+    }
 
+    const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+    // Attempt to match categories by name first (case-insensitive exact or partial)
+    let categoryIds = [];
+    try {
+      const catMatches = await Category.find({ name: regex }).select('_id');
+      categoryIds = catMatches.map(c => c._id);
+    } catch (e) {
+      console.warn('Category lookup failed during search:', e.message);
+    }
+
+    // Build $or conditions only for valid fields
+    const orConditions = [
+      { name: regex },
+      { description: regex }
+    ];
+    if (categoryIds.length) {
+      orConditions.push({ category: { $in: categoryIds } });
+    }
+
+    const products = await Product.find({ $or: orConditions })
+      .select('name price images category')
+      .limit(12)
+      .sort('-createdAt');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`searchProducts query="${query}" matches=${products.length} categoriesMatched=${categoryIds.length}`);
+    }
     res.json(products);
   } catch (error) {
     console.error('Error searching products:', error);
