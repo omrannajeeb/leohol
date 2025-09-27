@@ -28,6 +28,18 @@ const productSchema = new mongoose.Schema({
     type: String,
     required: [true, 'At least one product image is required']
   }],
+  // Optional product videos (e.g., MP4, WebM, hosted links or CDN)
+  videoUrls: [{
+    type: String,
+    validate: {
+      validator: function(v) {
+        if (!v) return true;
+        // Basic URL or relative path check
+        return /^(https?:\/\/|\/)/i.test(v);
+      },
+      message: 'Invalid video URL'
+    }
+  }],
   category: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category',
