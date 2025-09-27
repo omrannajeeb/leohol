@@ -31,7 +31,7 @@ import cloudinary from '../services/cloudinaryClient.js';
 // Get all products
 export const getProducts = async (req, res) => {
   try {
-  const { search, category, isNew, isFeatured, onSale } = req.query;
+  const { search, category, categories, isNew, isFeatured, onSale, includeInactive } = req.query;
     
     let query = {};
     
@@ -47,7 +47,19 @@ export const getProducts = async (req, res) => {
     }
 
     if (category) {
-      query.category = category;
+      query.$or = [
+        ...(query.$or || []),
+        { category },
+        { categories: category }
+      ];
+    }
+
+    if (categories) {
+      // Expect comma-separated list
+      const list = String(categories).split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length) {
+        query.$and = [ ...(query.$and || []), { $or: [ { category: { $in: list } }, { categories: { $in: list } } ] } ];
+      }
     }
 
     if (isNew === 'true') {
@@ -62,6 +74,11 @@ export const getProducts = async (req, res) => {
     if (onSale === 'true') {
       // Use $expr so it works even if discount field wasn't computed yet
       query.$expr = { $gt: ["$originalPrice", "$price"] };
+    }
+
+    // Exclude inactive by default
+    if (!includeInactive || includeInactive === 'false') {
+      query.isActive = { $ne: false };
     }
 
     const products = await Product.find(query)
@@ -101,6 +118,7 @@ export const getProduct = async (req, res) => {
     
     const product = await Product.findById(req.params.id)
       .populate('relatedProducts')
+      .populate('addOns')
       .populate({
         path: 'reviews.user',
         select: 'name email image'
@@ -159,8 +177,14 @@ export const createProduct = async (req, res) => {
       };
     }
 
+    // Multi-category: accept categories[] optionally, ensure primary category provided
+    let categoriesArray = [];
+    if (Array.isArray(req.body.categories)) {
+      categoriesArray = req.body.categories.filter(c => c); // simple sanitize
+    }
     const product = new Product({
       ...req.body,
+      categories: categoriesArray,
       sizeGuide,
       videoUrls,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
@@ -211,10 +235,34 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   try {
-  const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, ...updateData } = req.body;
-
+  const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, categories: incomingCategories, isActive: incomingIsActive, slug: incomingSlug, metaTitle, metaDescription, metaKeywords, ogTitle, ogDescription, ogImage, ...updateData } = req.body;
+    if (incomingSlug !== undefined) {
+      updateDataSanitized.slug = String(incomingSlug).trim() || undefined;
+    }
+    if (metaTitle !== undefined) updateDataSanitized.metaTitle = metaTitle;
+    if (metaDescription !== undefined) updateDataSanitized.metaDescription = metaDescription;
+    if (metaKeywords !== undefined) {
+      if (Array.isArray(metaKeywords)) updateDataSanitized.metaKeywords = metaKeywords.map(k=>String(k).trim()).filter(Boolean);
+      else if (typeof metaKeywords === 'string') updateDataSanitized.metaKeywords = metaKeywords.split(',').map(k=>k.trim()).filter(Boolean);
+    }
+    if (ogTitle !== undefined) updateDataSanitized.ogTitle = ogTitle;
+    if (ogDescription !== undefined) updateDataSanitized.ogDescription = ogDescription;
+    if (ogImage !== undefined) updateDataSanitized.ogImage = ogImage;
     // Sanitize and normalize incoming fields
     const updateDataSanitized = { ...updateData };
+
+    // Handle categories array update if provided
+    if (incomingCategories !== undefined) {
+      if (!Array.isArray(incomingCategories)) {
+        return res.status(400).json({ message: 'categories must be an array' });
+      }
+      updateDataSanitized.categories = incomingCategories.filter(c => c);
+    }
+
+    // Handle isActive flag
+    if (incomingIsActive !== undefined) {
+      updateDataSanitized.isActive = !!incomingIsActive;
+    }
 
     if (incomingVideoUrls !== undefined) {
       if (!Array.isArray(incomingVideoUrls)) {
@@ -366,25 +414,34 @@ export const updateProduct = async (req, res) => {
 // Delete product
 export const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-    
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
+    const { hard } = req.query;
+    if (hard === 'true') {
+      const product = await Product.findByIdAndDelete(req.params.id);
+      if (!product) return res.status(404).json({ message: 'Product not found' });
+      await Inventory.deleteMany({ product: product._id });
+      await new InventoryHistory({
+        product: product._id,
+        type: 'decrease',
+        quantity: product.stock,
+        reason: 'Product hard deleted',
+        user: req.user._id
+      }).save();
+      return res.json({ message: 'Product hard deleted' });
     }
-
-    // Delete associated inventory records
-    await Inventory.deleteMany({ product: product._id });
-    
-    // Create history record for deletion
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { isActive: false },
+      { new: true }
+    );
+    if (!product) return res.status(404).json({ message: 'Product not found' });
     await new InventoryHistory({
       product: product._id,
       type: 'decrease',
-      quantity: product.stock,
-      reason: 'Product deleted',
+      quantity: 0,
+      reason: 'Product soft deactivated',
       user: req.user._id
     }).save();
-    
-    res.json({ message: 'Product deleted successfully' });
+    res.json({ message: 'Product deactivated (soft delete)', product });
   } catch (error) {
     console.error('Error deleting product:', error);
     res.status(500).json({ message: error.message });
@@ -427,9 +484,10 @@ export const searchProducts = async (req, res) => {
     ];
     if (categoryIds.length) {
       orConditions.push({ category: { $in: categoryIds } });
+      orConditions.push({ categories: { $in: categoryIds } });
     }
 
-    const products = await Product.find({ $or: orConditions })
+    const products = await Product.find({ $or: orConditions, isActive: { $ne: false } })
       .select('name price images category')
       .limit(12)
       .sort('-createdAt');
@@ -459,6 +517,25 @@ export const updateRelatedProducts = async (req, res) => {
     res.json(product);
   } catch (error) {
     console.error('Error updating related products:', error);
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Update product add-ons (upsell items)
+export const updateAddOns = async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      { addOns: req.body.addOns },
+      { new: true }
+    ).populate('addOns');
+
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    res.json(product);
+  } catch (error) {
+    console.error('Error updating product add-ons:', error);
     res.status(400).json({ message: error.message });
   }
 };
