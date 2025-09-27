@@ -7,6 +7,7 @@ import {
   updateProduct,
   deleteProduct,
   updateRelatedProducts,
+  updateAddOns,
   searchProducts,
   reorderFeaturedProducts,
   bulkCreateProducts,
@@ -41,6 +42,7 @@ router.post('/bulk', adminAuth, bulkCreateProducts);
 router.put('/featured/reorder', adminAuth, reorderFeaturedProducts);
 router.put('/:id', adminAuth, updateProduct);
 router.put('/:id/related', adminAuth, updateRelatedProducts);
+router.put('/:id/addons', adminAuth, updateAddOns);
 router.post('/:id/videos', adminAuth, videoUpload.single('video'), uploadProductVideo);
 // Pre-create standalone video upload (returns URL only). Must precede dynamic :id catch for GETs but after other static POSTs.
 router.post('/videos/temp', adminAuth, videoUpload.single('video'), uploadTempProductVideo);
