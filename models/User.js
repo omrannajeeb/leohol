@@ -15,6 +15,20 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
   },
+  // OAuth provider (e.g., 'google') or 'local'
+  provider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local',
+    index: true
+  },
+  // Google OAuth subject identifier
+  googleId: {
+    type: String,
+    index: true,
+    sparse: true,
+    unique: true
+  },
   // Optional phone number for WhatsApp / SMS (E.164 format preferred e.g. +15551234567)
   phoneNumber: {
     type: String,
@@ -25,7 +39,8 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    // For OAuth accounts (e.g., Google) password can be omitted
+    required: function() { return this.provider === 'local'; },
     minlength: [6, 'Password must be at least 6 characters']
   },
   image: {
@@ -66,6 +81,9 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  lastLoginAt: {
+    type: Date
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -79,6 +97,7 @@ userSchema.index({ createdAt: -1 });
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ phoneNumber: 1 });
 userSchema.index({ whatsappOptIn: 1 });
+userSchema.index({ provider: 1, googleId: 1 });
 // Compound text index for name/email search (case-insensitive regex still used, but this can help if migrated to $text)
 // Note: Using weights in case future $text search introduced
 userSchema.index({ name: 'text', email: 'text' }, { weights: { name: 5, email: 10 }, name: 'UserTextIndex' });
