@@ -138,8 +138,30 @@ export const createProduct = async (req, res) => {
     // Basic length cap to prevent abuse
     if (videoUrls.length > 8) videoUrls = videoUrls.slice(0, 8);
 
+    // Optional sizeGuide normalization
+    let sizeGuide = undefined;
+    if (req.body.sizeGuide && typeof req.body.sizeGuide === 'object') {
+      const sg = req.body.sizeGuide;
+      const unit = ['cm', 'in'].includes(sg.unit) ? sg.unit : 'cm';
+      const rows = Array.isArray(sg.rows) ? sg.rows.filter(r => r && r.size).map(r => ({
+        size: String(r.size).trim(),
+        chest: r.chest != null ? Number(r.chest) : undefined,
+        waist: r.waist != null ? Number(r.waist) : undefined,
+        hip: r.hip != null ? Number(r.hip) : undefined,
+        length: r.length != null ? Number(r.length) : undefined,
+        sleeve: r.sleeve != null ? Number(r.sleeve) : undefined
+      })) : [];
+      sizeGuide = {
+        title: sg.title ? String(sg.title).trim() : undefined,
+        unit,
+        rows,
+        note: sg.note ? String(sg.note).trim() : undefined
+      };
+    }
+
     const product = new Product({
       ...req.body,
+      sizeGuide,
       videoUrls,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
     });
@@ -189,7 +211,7 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   try {
-  const { sizes, colors, videoUrls: incomingVideoUrls, ...updateData } = req.body;
+  const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, ...updateData } = req.body;
 
     // Sanitize and normalize incoming fields
     const updateDataSanitized = { ...updateData };
@@ -236,6 +258,31 @@ export const updateProduct = async (req, res) => {
           return res.status(400).json({ message: `Category not found: ${catVal}` });
         }
         updateDataSanitized.category = cat._id;
+      }
+    }
+
+    // Normalize sizeGuide if provided
+    if (incomingSizeGuide !== undefined) {
+      if (incomingSizeGuide && typeof incomingSizeGuide === 'object') {
+        const sg = incomingSizeGuide;
+        const unit = ['cm', 'in'].includes(sg.unit) ? sg.unit : 'cm';
+        const rows = Array.isArray(sg.rows) ? sg.rows.filter(r => r && r.size).map(r => ({
+          size: String(r.size).trim(),
+          chest: r.chest != null ? Number(r.chest) : undefined,
+          waist: r.waist != null ? Number(r.waist) : undefined,
+          hip: r.hip != null ? Number(r.hip) : undefined,
+          length: r.length != null ? Number(r.length) : undefined,
+          sleeve: r.sleeve != null ? Number(r.sleeve) : undefined
+        })) : [];
+        updateDataSanitized.sizeGuide = {
+          title: sg.title ? String(sg.title).trim() : undefined,
+          unit,
+          rows,
+            note: sg.note ? String(sg.note).trim() : undefined
+        };
+      } else if (incomingSizeGuide === null) {
+        // Allow clearing sizeGuide
+        updateDataSanitized.sizeGuide = undefined;
       }
     }
 
