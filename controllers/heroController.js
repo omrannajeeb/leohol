@@ -12,8 +12,9 @@ export const getAllHeros = async (req, res) => {
 export const getActiveHero = async (req, res) => {
   try {
     const hero = await Hero.findOne({ isActive: true });
+    // Absence of an active hero is not an exceptional condition for the UI; return null with 200
     if (!hero) {
-      return res.status(404).json({ message: 'No active hero section found' });
+      return res.json(null);
     }
     res.json(hero);
   } catch (error) {
