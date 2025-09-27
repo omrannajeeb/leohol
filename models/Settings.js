@@ -213,6 +213,13 @@ const settingsSchema = new mongoose.Schema({
     type: Number,
     default: 5000, // 5 seconds
     min: 0
+  },
+  // Google auth configuration (admin managed, non-secret)
+  googleAuth: {
+    enabled: { type: Boolean, default: false },
+    clientId: { type: String, default: '' },
+    // Write-only client secret (never returned in GET). If migrating to OAuth code flow.
+    clientSecret: { type: String, default: '' }
   }
 }, {
   timestamps: true
@@ -658,6 +665,11 @@ settingsSchema.statics.createDefaultSettings = async function() {
             secret: ''
           }
         };
+        needsUpdate = true;
+      }
+      // Ensure googleAuth exists
+      if (!settings.googleAuth) {
+        updateData.googleAuth = { enabled: false, clientId: '' };
         needsUpdate = true;
       }
 
