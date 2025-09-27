@@ -25,12 +25,12 @@ import Category from '../models/Category.js';
 import Warehouse from '../models/Warehouse.js';
 import { validateProductData } from '../utils/validation.js';
 import { handleProductImages } from '../utils/imageHandler.js';
-import { convertPrice } from '../utils/currency.js';
+// Currency conversion disabled for product storage/display; prices are stored and served as-is in store currency
 
 // Get all products
 export const getProducts = async (req, res) => {
   try {
-    const { search, currency = 'USD', category, isNew, isFeatured, onSale } = req.query;
+  const { search, category, isNew, isFeatured, onSale } = req.query;
     
     let query = {};
     
@@ -80,13 +80,7 @@ export const getProducts = async (req, res) => {
         // Add inventory data to each product
         productObj.inventory = inventory;
         
-        // Convert prices if needed
-        if (currency !== 'USD') {
-          productObj.price = await convertPrice(product.price, 'USD', currency);
-          if (product.originalPrice) {
-            productObj.originalPrice = await convertPrice(product.originalPrice, 'USD', currency);
-          }
-        }
+        // No runtime currency conversion
         
         return productObj;
       })
@@ -102,7 +96,7 @@ export const getProducts = async (req, res) => {
 // Get single product
 export const getProduct = async (req, res) => {
   try {
-    const { currency = 'USD' } = req.query;
+  // Currency query param ignored; no conversion performed
     
     const product = await Product.findById(req.params.id)
       .populate('relatedProducts')
@@ -120,13 +114,7 @@ export const getProduct = async (req, res) => {
     const productObj = product.toObject();
     productObj.inventory = inventory;
 
-    // Convert prices if needed
-    if (currency !== 'USD') {
-      productObj.price = await convertPrice(product.price, 'USD', currency);
-      if (product.originalPrice) {
-        productObj.originalPrice = await convertPrice(product.originalPrice, 'USD', currency);
-      }
-    }
+    // No runtime currency conversion
 
     res.json(productObj);
   } catch (error) {
@@ -144,13 +132,9 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: 'Invalid product data', errors });
     }
 
-    // Convert price to USD for storage
-    const priceInUSD = await convertPrice(req.body.price, req.body.currency || 'USD', 'USD');
-
-    // Create product with nested color/sizes (images are now per color)
+    // Create product storing provided price directly (assumed store currency)
     const product = new Product({
       ...req.body,
-      price: priceInUSD,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
     });
     const savedProduct = await product.save();
@@ -347,7 +331,7 @@ export const deleteProduct = async (req, res) => {
 // Search products
 export const searchProducts = async (req, res) => {
   try {
-    const { query, currency = 'USD' } = req.query;
+  const { query } = req.query;
     
     if (!query) {
       return res.json([]);
@@ -363,18 +347,6 @@ export const searchProducts = async (req, res) => {
     .select('name price images category')
     .limit(12)
     .sort('-createdAt');
-
-    // Convert prices if needed
-    if (currency !== 'USD') {
-      const convertedProducts = await Promise.all(
-        products.map(async (product) => {
-          const convertedProduct = product.toObject();
-          convertedProduct.price = await convertPrice(product.price, 'USD', currency);
-          return convertedProduct;
-        })
-      );
-      return res.json(convertedProducts);
-    }
 
     res.json(products);
   } catch (error) {
@@ -513,11 +485,9 @@ export const bulkCreateProducts = async (req, res) => {
         // Handle image validation
         const validatedImages = await handleProductImages(body.images);
 
-        // Convert price to USD for storage
-        const priceInUSD = await convertPrice(body.price, body.currency || 'USD', 'USD');
-        const originalInUSD = body.originalPrice != null
-          ? await convertPrice(body.originalPrice, body.currency || 'USD', 'USD')
-          : undefined;
+        // Store provided prices directly
+        const priceInUSD = body.price;
+        const originalInUSD = body.originalPrice;
 
         // Create product
         const product = new Product({
