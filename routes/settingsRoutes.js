@@ -70,6 +70,14 @@ router.get('/', async (req, res) => {
         }
       };
     }
+    if (obj.googleAuth) {
+      obj.googleAuth = {
+        enabled: !!obj.googleAuth.enabled,
+        clientId: obj.googleAuth.clientId || '',
+        secretSet: !!(obj.googleAuth.clientSecret && obj.googleAuth.clientSecret.length > 0)
+      };
+      delete obj.googleAuth.clientSecret;
+    }
     res.json(obj);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -199,6 +207,25 @@ router.put('/', settingsWriteGuard, async (req, res) => {
         try { settings.markModified('payments'); } catch {}
       }
 
+      // Google Auth (includes optional clientSecret write-only)
+      if (req.body.googleAuth && typeof req.body.googleAuth === 'object') {
+        settings.googleAuth = settings.googleAuth || { enabled: false, clientId: '', clientSecret: '' };
+        const incomingGA = req.body.googleAuth;
+        if (typeof incomingGA.enabled !== 'undefined') settings.googleAuth.enabled = !!incomingGA.enabled;
+        if (typeof incomingGA.clientId === 'string') settings.googleAuth.clientId = incomingGA.clientId.trim();
+        if (typeof incomingGA.clientSecret === 'string') {
+          // Mask preservation pattern: if UI sends '***' keep previous secret
+          if (incomingGA.clientSecret === '***') {
+            // preserve existing
+          } else if (incomingGA.clientSecret === '') {
+            settings.googleAuth.clientSecret = '';
+          } else {
+            settings.googleAuth.clientSecret = incomingGA.clientSecret.trim();
+          }
+        }
+        try { settings.markModified('googleAuth'); } catch {}
+      }
+
       // Facebook Pixel
       if (req.body.facebookPixel && typeof req.body.facebookPixel === 'object') {
         settings.facebookPixel = {
@@ -303,6 +330,8 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             atcHoverBgColor: settings.atcHoverBgColor,
             // Auth pages background image
             authBackgroundImage: settings.authBackgroundImage,
+            // Auth provider toggles
+            googleAuth: settings.googleAuth ? { enabled: !!settings.googleAuth.enabled, clientId: settings.googleAuth.clientId || '', secretSet: !!(settings.googleAuth.clientSecret && settings.googleAuth.clientSecret.length > 0) } : { enabled: false, clientId: '', secretSet: false }
           }
         });
       }
@@ -310,7 +339,16 @@ router.put('/', settingsWriteGuard, async (req, res) => {
       console.error('Failed to broadcast settings update:', e);
     }
 
-    res.json(settings);
+    // Sanitize response like GET
+    const savedObj = settings.toObject();
+    if (savedObj.googleAuth) {
+      savedObj.googleAuth = {
+        enabled: !!savedObj.googleAuth.enabled,
+        clientId: savedObj.googleAuth.clientId || '',
+        secretSet: !!(savedObj.googleAuth.clientSecret && savedObj.googleAuth.clientSecret.length > 0)
+      };
+    }
+    res.json(savedObj);
   } catch (error) {
   console.error('[Settings PUT] Error:', error);
     if (error.name === 'ValidationError') {
