@@ -34,6 +34,11 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Background image for authentication pages (login/register)
+  authBackgroundImage: {
+    type: String,
+    default: ''
+  },
   // Logo sizing (persisted so guests see admin changes)
   logoWidthMobile: {
     type: Number,
@@ -199,6 +204,10 @@ const settingsSchema = new mongoose.Schema({
   scrollTopTextColor: { type: String, default: '' },
   scrollTopHoverBgColor: { type: String, default: '' },
   scrollTopPingColor: { type: String, default: '' },
+  // Add To Cart button theme (persist so guests see admin design)
+  atcBgColor: { type: String, default: '' },
+  atcTextColor: { type: String, default: '' },
+  atcHoverBgColor: { type: String, default: '' },
   // Hero carousel settings
   heroAutoplayMs: {
     type: Number,
@@ -618,6 +627,19 @@ settingsSchema.statics.createDefaultSettings = async function() {
       // Ensure hero autoplay exists
       if (typeof settings.heroAutoplayMs === 'undefined') {
         updateData.heroAutoplayMs = 5000;
+        needsUpdate = true;
+      }
+      // Ensure new ATC color fields exist (added after initial deployments)
+      if (typeof settings.atcBgColor === 'undefined') {
+        updateData.atcBgColor = '';
+        needsUpdate = true;
+      }
+      if (typeof settings.atcTextColor === 'undefined') {
+        updateData.atcTextColor = '';
+        needsUpdate = true;
+      }
+      if (typeof settings.atcHoverBgColor === 'undefined') {
+        updateData.atcHoverBgColor = '';
         needsUpdate = true;
       }
       // Ensure apiBaseUrl field exists
