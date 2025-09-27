@@ -25,6 +25,7 @@ import Category from '../models/Category.js';
 import Warehouse from '../models/Warehouse.js';
 import { validateProductData } from '../utils/validation.js';
 import { handleProductImages } from '../utils/imageHandler.js';
+import cloudinary from '../services/cloudinaryClient.js';
 // Currency conversion disabled for product storage/display; prices are stored and served as-is in store currency
 
 // Get all products
@@ -412,6 +413,67 @@ export const updateRelatedProducts = async (req, res) => {
   } catch (error) {
     console.error('Error updating related products:', error);
     res.status(400).json({ message: error.message });
+  }
+};
+
+// Upload a single video and append its URL to product.videoUrls
+export const uploadProductVideo = async (req, res) => {
+  try {
+    const productId = req.params.id;
+    const product = await Product.findById(productId);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    if (!req.file) return res.status(400).json({ message: 'No video file provided' });
+
+    // Limit number of videos
+    if (product.videoUrls && product.videoUrls.length >= 8) {
+      return res.status(400).json({ message: 'Maximum of 8 videos reached' });
+    }
+
+    // Cloudinary upload via upload_stream using buffer
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({
+        resource_type: 'video',
+        folder: 'products/videos'
+      }, (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      });
+      stream.end(req.file.buffer);
+    });
+
+    const url = uploadResult.secure_url;
+    product.videoUrls = product.videoUrls || [];
+    product.videoUrls.push(url);
+    await product.save();
+
+    res.status(201).json({ url, videoUrls: product.videoUrls });
+  } catch (error) {
+    console.error('Error uploading product video:', error);
+    res.status(500).json({ message: 'Failed to upload video', error: error.message });
+  }
+};
+
+// Standalone video upload (for use before product exists). Returns Cloudinary URL so client can include it in createProduct videoUrls.
+export const uploadTempProductVideo = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No video file provided' });
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({
+        resource_type: 'video',
+        folder: 'products/videos'
+      }, (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      });
+      stream.end(req.file.buffer);
+    });
+
+    res.status(201).json({ url: uploadResult.secure_url });
+  } catch (error) {
+    console.error('Error uploading temporary product video:', error);
+    res.status(500).json({ message: 'Failed to upload video', error: error.message });
   }
 };
 
