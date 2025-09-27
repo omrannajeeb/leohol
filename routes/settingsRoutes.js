@@ -297,6 +297,12 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             logoWidthMobile: settings.logoWidthMobile,
             logoMaxHeightMobile: settings.logoMaxHeightMobile,
             logoWidthDesktop: settings.logoWidthDesktop,
+            // ATC theme colors (newly persisted)
+            atcBgColor: settings.atcBgColor,
+            atcTextColor: settings.atcTextColor,
+            atcHoverBgColor: settings.atcHoverBgColor,
+            // Auth pages background image
+            authBackgroundImage: settings.authBackgroundImage,
           }
         });
       }
@@ -351,6 +357,29 @@ router.post('/upload/header-icon/:key', adminAuth, upload.single('file'), async 
     } catch {}
 
     res.json({ key, url: publicUrl });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Upload authentication background image (admin only)
+router.post('/upload/auth-background', adminAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    let settings = await Settings.findOne();
+    if (!settings) settings = new Settings();
+    const publicUrl = `/uploads/${req.file.filename}`;
+    settings.authBackgroundImage = publicUrl;
+    await settings.save();
+    try {
+      const broadcast = req.app.get('broadcastToClients');
+      if (typeof broadcast === 'function') {
+        broadcast({ type: 'settings_updated', data: { authBackgroundImage: settings.authBackgroundImage } });
+      }
+    } catch {}
+    res.json({ url: publicUrl });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
