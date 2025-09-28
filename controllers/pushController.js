@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import PushSubscription from '../models/PushSubscription.js';
 import { ApiError } from '../utils/ApiError.js';
+import Settings from '../models/Settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,13 +59,18 @@ export const sendTestNotification = async (req, res, next) => {
     if (!VAPID_PUBLIC || !VAPID_PRIVATE) throw new ApiError(500, 'VAPID keys not configured');
 
     const subs = await PushSubscription.find(userFilter(req));
+    // Resolve favicon from settings (fallback to default)
+    let favicon = '/favicon.svg';
+    try {
+      const s = await Settings.findOne().select('favicon');
+      if (s && s.favicon) favicon = s.favicon;
+    } catch {}
     const payload = JSON.stringify({
       title: 'Store notification',
       body: 'This is a loud test with sound and vibration (if supported).',
-      icon: '/favicon.svg',
-      badge: '/favicon.svg',
+      icon: favicon,
+      badge: favicon,
       url: '/',
-      // Encourage sound/visibility (actual sound depends on OS/browser settings)
       silent: false,
       requireInteraction: true,
       renotify: true,
