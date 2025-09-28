@@ -87,7 +87,41 @@ export const login = async (req, res) => {
     // Find user
   const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      // Optional auto-register-on-login feature (disabled by default)
+      const autoRegister = String(process.env.AUTO_REGISTER_ON_LOGIN || '').toLowerCase();
+      const enabled = ['1','true','yes','on'].includes(autoRegister);
+      if (!enabled) {
+        return res.status(401).json({ message: 'Invalid email or password' });
+      }
+      // Basic minimum validation before implicit registration
+      if (!password || String(password).length < 6) {
+        return res.status(400).json({ message: 'Password too short for automatic registration' });
+      }
+      try {
+        const newUser = new User({
+          name: normalizedEmail.split('@')[0],
+          email: normalizedEmail,
+          password,
+          role: 'user',
+          provider: 'local'
+        });
+        await newUser.save();
+        const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        return res.status(201).json({
+          autoRegistered: true,
+          token,
+          user: {
+            id: newUser._id,
+            name: newUser.name,
+            email: newUser.email,
+            role: newUser.role,
+            image: newUser.image || null
+          }
+        });
+      } catch (e) {
+        console.error('Auto-register on login failed:', e);
+        return res.status(500).json({ message: 'Failed to auto-register user' });
+      }
     }
 
     // Check password
