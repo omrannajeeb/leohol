@@ -39,6 +39,7 @@ import dbManager from './services/dbManager.js';
 import brandRoutes from './routes/brandRoutes.js';
 import cloudinaryRoutes from './routes/cloudinaryRoutes.js';
 import paypalRoutes from './routes/paypalRoutes.js';
+import legalRoutes from './routes/legalRoutes.js';
 
 // Path Setup
 const __filename = fileURLToPath(import.meta.url);
@@ -165,6 +166,7 @@ app.use('/api/layout', layoutRoutes);
 app.use('/api/brands', brandRoutes);
 app.use('/api/cloudinary', cloudinaryRoutes);
 app.use('/api/paypal', paypalRoutes);
+app.use('/api/legal', legalRoutes);
 app.use('/api/db', dbRoutes);
 
 // Health Check Route
