@@ -13,7 +13,8 @@ import {
   bulkCreateProducts,
   getProductStock,
   uploadProductVideo,
-  uploadTempProductVideo
+  uploadTempProductVideo,
+  getProductFilters
 } from '../controllers/productController.js';
 import { videoUpload } from '../middleware/videoUpload.js';
 import {
@@ -31,6 +32,7 @@ const router = express.Router();
 
 // Public routes
 router.get('/', getProducts);
+router.get('/filters', getProductFilters); // must be before :id
 router.get('/search', searchProducts);
 // Place static paths before dynamic ':id' to avoid conflicts
 router.get('/:id/stock', getProductStock); // New endpoint for stock levels
