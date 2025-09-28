@@ -25,6 +25,7 @@ import {
   verifyReview,
   deleteReview
 } from '../controllers/reviewController.js';
+import { updateProductImages } from '../controllers/productController.js';
 
 const router = express.Router();
 
@@ -43,6 +44,8 @@ router.put('/featured/reorder', adminAuth, reorderFeaturedProducts);
 router.put('/:id', adminAuth, updateProduct);
 router.put('/:id/related', adminAuth, updateRelatedProducts);
 router.put('/:id/addons', adminAuth, updateAddOns);
+// Partial image-only update
+router.patch('/:id/images', adminAuth, updateProductImages);
 router.post('/:id/videos', adminAuth, videoUpload.single('video'), uploadProductVideo);
 // Pre-create standalone video upload (returns URL only). Must precede dynamic :id catch for GETs but after other static POSTs.
 router.post('/videos/temp', adminAuth, videoUpload.single('video'), uploadTempProductVideo);
