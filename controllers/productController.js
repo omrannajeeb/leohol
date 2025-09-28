@@ -522,10 +522,15 @@ export const updateProductImages = async (req, res) => {
 
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: 'Product not found' });
-
     product.images = cleaned;
+    // Maintain or initialize an imagesVersion field (used for cache busting client side)
+    if (typeof product.imagesVersion !== 'number') {
+      product.imagesVersion = 1;
+    } else {
+      product.imagesVersion += 1;
+    }
     await product.save();
-    res.json({ message: 'Images updated', images: product.images });
+    res.json({ message: 'Images updated', images: product.images, imagesVersion: product.imagesVersion });
   } catch (error) {
     console.error('Error updating product images:', error);
     res.status(500).json({ message: 'Failed to update product images' });
