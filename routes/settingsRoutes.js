@@ -325,6 +325,8 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             logoWidthMobile: settings.logoWidthMobile,
             logoMaxHeightMobile: settings.logoMaxHeightMobile,
             logoWidthDesktop: settings.logoWidthDesktop,
+            // Favicon
+            favicon: settings.favicon,
             // ATC theme colors (newly persisted)
             atcBgColor: settings.atcBgColor,
             atcTextColor: settings.atcTextColor,
@@ -443,6 +445,60 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
       const broadcast = req.app.get('broadcastToClients');
       if (typeof broadcast === 'function') {
         broadcast({ type: 'settings_updated', data: { authBackgroundImage: settings.authBackgroundImage } });
+      }
+    } catch {}
+
+    res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Upload favicon (admin only). Accepts image/svg+xml, image/png, image/x-icon. Stores at /uploads or Cloudinary folder settings/favicon
+router.post('/upload/favicon', adminAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    // Basic content-type check
+    const allowed = ['image/svg+xml','image/png','image/x-icon','image/vnd.microsoft.icon'];
+    if (!allowed.includes(req.file.mimetype)) {
+      return res.status(400).json({ message: 'Unsupported favicon file type' });
+    }
+
+    let settings = await Settings.findOne();
+    if (!settings) settings = new Settings();
+
+    let finalUrl = `/uploads/${req.file.filename}`;
+    const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
+    if (hasCloudinaryCreds) {
+      try {
+        await ensureCloudinaryConfig();
+        const uploadResult = await cloudinary.uploader.upload(path.join(uploadDir, req.file.filename), {
+          folder: 'settings/favicon',
+          resource_type: 'image',
+          use_filename: true,
+          unique_filename: false,
+          overwrite: true,
+          type: 'upload'
+        });
+        if (uploadResult?.secure_url) {
+          finalUrl = uploadResult.secure_url;
+          try { fs.unlinkSync(path.join(uploadDir, req.file.filename)); } catch {}
+        }
+      } catch (cloudErr) {
+        console.warn('[favicon] Cloudinary upload failed, keeping local file:', cloudErr.message);
+      }
+    }
+
+    settings.favicon = finalUrl;
+    await settings.save();
+
+    // Broadcast minimal update
+    try {
+      const broadcast = req.app.get('broadcastToClients');
+      if (typeof broadcast === 'function') {
+        broadcast({ type: 'settings_updated', data: { favicon: settings.favicon } });
       }
     } catch {}
 
