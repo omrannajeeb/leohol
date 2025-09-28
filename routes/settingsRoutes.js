@@ -353,6 +353,10 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             atcBgColor: settings.atcBgColor,
             atcTextColor: settings.atcTextColor,
             atcHoverBgColor: settings.atcHoverBgColor,
+            // New Arrivals mobile theme
+            newArrivalsMobileHeadingColor: settings.newArrivalsMobileHeadingColor,
+            newArrivalsMobileTextColor: settings.newArrivalsMobileTextColor,
+            newArrivalsMobileOverlayBg: settings.newArrivalsMobileOverlayBg,
             // Auth pages background image
             authBackgroundImage: settings.authBackgroundImage,
             // Auth provider toggles
