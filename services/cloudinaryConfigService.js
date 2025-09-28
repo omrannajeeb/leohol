@@ -29,4 +29,16 @@ export async function ensureCloudinaryConfig() {
   return true;
 }
 
-export default { ensureCloudinaryConfig, loadCredsFromDbOrEnv };
+// Helper used by routes to decide whether to attempt Cloudinary upload.
+// Unlike previous in-route checks that only looked at environment variables,
+// this also considers credentials saved in the Settings collection.
+export async function hasCloudinaryCredentials() {
+  try {
+    const { cloudName, apiKey, apiSecret } = await loadCredsFromDbOrEnv();
+    return !!(cloudName && apiKey && apiSecret);
+  } catch {
+    return false;
+  }
+}
+
+export default { ensureCloudinaryConfig, loadCredsFromDbOrEnv, hasCloudinaryCredentials };
