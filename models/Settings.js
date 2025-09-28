@@ -95,6 +95,11 @@ const settingsSchema = new mongoose.Schema({
   newArrivalsMobileOverlayBg: { type: String, default: '' }, // e.g. 'rgba(0,0,0,0.4)' or hex with opacity via CSS
   newArrivalsMobileProductNameColor: { type: String, default: '' }, // product name color on mobile New Arrivals grid
   newArrivalsMobileProductPriceColor: { type: String, default: '' }, // product price color on mobile New Arrivals grid
+  // New Arrivals dedicated banner (optional)
+  newArrivalsBannerEnabled: { type: Boolean, default: false }, // toggles banner visibility
+  newArrivalsBannerImage: { type: String, default: '' }, // image URL/path (uploaded via admin)
+  newArrivalsBannerHeading: { type: String, default: '' }, // overrides default page heading when provided & enabled
+  newArrivalsBannerSubheading: { type: String, default: '' }, // optional supporting text under heading
   // Navigation styles (top bar + mega menu)
   navCategoryFontColor: { type: String, default: '' },
   navCategoryFontSize: { type: String, enum: ['small','medium','large'], default: 'medium' },
