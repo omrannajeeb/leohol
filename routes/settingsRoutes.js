@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { adminAuth, auth } from '../middleware/auth.js';
 import Settings from '../models/Settings.js';
 import { ensureCloudinaryConfig } from '../services/cloudinaryConfigService.js';
+import cloudinary from '../services/cloudinaryClient.js';
 
 const router = express.Router();
 
@@ -406,18 +407,46 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
+
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
-    const publicUrl = `/uploads/${req.file.filename}`;
-    settings.authBackgroundImage = publicUrl;
+
+    // Decide whether to push to Cloudinary (more persistent) or keep local file.
+    let finalUrl = `/uploads/${req.file.filename}`; // default local path
+    const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
+
+    if (hasCloudinaryCreds) {
+      try {
+        await ensureCloudinaryConfig();
+        const uploadResult = await cloudinary.uploader.upload(path.join(uploadDir, req.file.filename), {
+          folder: 'settings/auth',
+          resource_type: 'image',
+          use_filename: true,
+          unique_filename: false,
+          overwrite: true
+        });
+        if (uploadResult && uploadResult.secure_url) {
+          finalUrl = uploadResult.secure_url;
+          // Remove local temp file to save space
+          try { fs.unlinkSync(path.join(uploadDir, req.file.filename)); } catch {}
+        }
+      } catch (cloudErr) {
+        console.warn('[auth-background] Cloudinary upload failed, keeping local file:', cloudErr.message);
+      }
+    }
+
+    settings.authBackgroundImage = finalUrl;
     await settings.save();
+
+    // Broadcast minimal update
     try {
       const broadcast = req.app.get('broadcastToClients');
       if (typeof broadcast === 'function') {
         broadcast({ type: 'settings_updated', data: { authBackgroundImage: settings.authBackgroundImage } });
       }
     } catch {}
-    res.json({ url: publicUrl });
+
+    res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
