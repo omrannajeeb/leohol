@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { adminAuth, auth } from '../middleware/auth.js';
 import Settings from '../models/Settings.js';
-import { ensureCloudinaryConfig } from '../services/cloudinaryConfigService.js';
+import { ensureCloudinaryConfig, hasCloudinaryCredentials } from '../services/cloudinaryConfigService.js';
 import cloudinary from '../services/cloudinaryClient.js';
 
 const router = express.Router();
@@ -442,7 +442,7 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
 
     // Decide whether to push to Cloudinary (more persistent) or keep local file.
   let finalUrl = `/uploads/${req.file.filename}`; // default local path (ephemeral if host has no persistent disk)
-  const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
+  const hasCloudinaryCreds = await hasCloudinaryCredentials();
 
     if (hasCloudinaryCreds) {
       try {
@@ -516,7 +516,7 @@ router.post('/upload/favicon', adminAuth, upload.single('file'), async (req, res
     if (!settings) settings = new Settings();
 
     let finalUrl = `/uploads/${req.file.filename}`; // default local path (may be ephemeral)
-    const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
+  const hasCloudinaryCreds = await hasCloudinaryCredentials();
     if (hasCloudinaryCreds) {
       try {
         await ensureCloudinaryConfig();
@@ -587,16 +587,22 @@ router.get('/cloudinary', adminAuth, async (req, res) => {
 
 router.put('/cloudinary', adminAuth, async (req, res) => {
   try {
-    const { cloudName = '', apiKey = '', apiSecret = '' } = req.body || {};
+    const { cloudName = '', apiKey = '', apiSecret = '', clearSecret = false } = req.body || {};
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
     settings.cloudinary = settings.cloudinary || {};
+    // Only update fields when non-empty strings provided. Allow explicit clearing via clearSecret flag.
     if (typeof cloudName === 'string' && cloudName.trim().length) settings.cloudinary.cloudName = cloudName.trim();
-    if (typeof apiKey === 'string') settings.cloudinary.apiKey = apiKey.trim();
-    if (typeof apiSecret === 'string' && apiSecret !== '***') settings.cloudinary.apiSecret = apiSecret.trim();
+    if (typeof apiKey === 'string' && apiKey.trim().length) settings.cloudinary.apiKey = apiKey.trim();
+    if (clearSecret === true) {
+      settings.cloudinary.apiSecret = '';
+    } else if (typeof apiSecret === 'string' && apiSecret !== '***' && apiSecret.trim().length) {
+      settings.cloudinary.apiSecret = apiSecret.trim();
+    }
     await settings.save();
-    await ensureCloudinaryConfig();
-    res.json({ ok: true });
+    const configured = await ensureCloudinaryConfig();
+    const c = settings.cloudinary || {};
+    res.json({ ok: true, configured, cloudinary: { cloudName: c.cloudName || '', apiKey: c.apiKey || '', apiSecret: c.apiSecret ? '***' : '' } });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
