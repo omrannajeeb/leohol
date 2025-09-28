@@ -89,6 +89,10 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: '#ffffff' // White
   },
+  // New Arrivals page (mobile-specific theming)
+  newArrivalsMobileHeadingColor: { type: String, default: '' }, // e.g. '#ffffff'
+  newArrivalsMobileTextColor: { type: String, default: '' }, // e.g. '#e5e7eb'
+  newArrivalsMobileOverlayBg: { type: String, default: '' }, // e.g. 'rgba(0,0,0,0.4)' or hex with opacity via CSS
   // Navigation styles (top bar + mega menu)
   navCategoryFontColor: { type: String, default: '' },
   navCategoryFontSize: { type: String, enum: ['small','medium','large'], default: 'medium' },
