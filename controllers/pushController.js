@@ -6,6 +6,19 @@ import PushSubscription from '../models/PushSubscription.js';
 import { ApiError } from '../utils/ApiError.js';
 import Settings from '../models/Settings.js';
 
+// Helper duplicated (lightweight) – convert relative asset to absolute for notification icons
+function toAbsolute(req, url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  try {
+    const protoHeader = (req.headers['x-forwarded-proto'] || '').toString();
+    const proto = protoHeader.split(',')[0] || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || '').toString().split(',')[0];
+    if (!host) return url;
+    return `${proto}://${host}${url.startsWith('/') ? '' : '/'}${url}`;
+  } catch { return url; }
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -63,7 +76,7 @@ export const sendTestNotification = async (req, res, next) => {
     let favicon = '/favicon.svg';
     try {
       const s = await Settings.findOne().select('favicon');
-      if (s && s.favicon) favicon = s.favicon;
+      if (s && s.favicon) favicon = toAbsolute(req, s.favicon);
     } catch {}
     const payload = JSON.stringify({
       title: 'Store notification',
