@@ -34,6 +34,11 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Favicon (SVG/PNG/ICO). Managed via admin panel; when set, overrides default /favicon.svg served from public root.
+  favicon: {
+    type: String,
+    default: null
+  },
   // Background image for authentication pages (login/register)
   authBackgroundImage: {
     type: String,
