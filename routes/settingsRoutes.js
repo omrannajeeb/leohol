@@ -13,7 +13,8 @@ const router = express.Router();
 // Helper: convert relative asset path (e.g. /uploads/xxx.png) to absolute URL for client consumption
 function toAbsolute(req, url) {
   if (!url) return url;
-  if (/^https?:\/\//i.test(url)) return url; // already absolute (Cloudinary etc.)
+  // Already absolute (http/https) OR inline / blob data – leave untouched
+  if (/^(https?:|data:|blob:)/i.test(url)) return url;
   try {
     const protoHeader = (req.headers['x-forwarded-proto'] || '').toString();
     const proto = protoHeader.split(',')[0] || req.protocol || 'http';
@@ -96,7 +97,7 @@ router.get('/', async (req, res) => {
     }
     // Normalize favicon (and optionally logo) to absolute so other-origins (Netlify) can load it
     try {
-      if (obj.favicon) obj.favicon = toAbsolute(req, obj.favicon);
+  if (obj.favicon) obj.favicon = toAbsolute(req, obj.favicon);
       if (obj.logo && obj.logo.startsWith('/uploads/')) obj.logo = toAbsolute(req, obj.logo);
       if (obj.authBackgroundImage && obj.authBackgroundImage.startsWith('/uploads/')) obj.authBackgroundImage = toAbsolute(req, obj.authBackgroundImage);
     } catch {}
@@ -366,7 +367,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
     // Sanitize response like GET
     const savedObj = settings.toObject();
     try {
-      if (savedObj.favicon) savedObj.favicon = toAbsolute(req, savedObj.favicon);
+  if (savedObj.favicon) savedObj.favicon = toAbsolute(req, savedObj.favicon);
       if (savedObj.logo && savedObj.logo.startsWith('/uploads/')) savedObj.logo = toAbsolute(req, savedObj.logo);
       if (savedObj.authBackgroundImage && savedObj.authBackgroundImage.startsWith('/uploads/')) savedObj.authBackgroundImage = toAbsolute(req, savedObj.authBackgroundImage);
     } catch {}
@@ -514,35 +515,48 @@ router.post('/upload/favicon', adminAuth, upload.single('file'), async (req, res
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings();
 
-    let finalUrl = `/uploads/${req.file.filename}`;
+    let finalUrl = `/uploads/${req.file.filename}`; // default local path (may be ephemeral)
     const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
     if (hasCloudinaryCreds) {
       try {
         await ensureCloudinaryConfig();
         const uploadResult = await cloudinary.uploader.upload(path.join(uploadDir, req.file.filename), {
           folder: 'settings/favicon',
-          resource_type: 'image',
-          use_filename: true,
-          unique_filename: false,
-          overwrite: true,
-          type: 'upload'
-        });
-        if (uploadResult?.secure_url) {
-          finalUrl = uploadResult.secure_url;
-          try { fs.unlinkSync(path.join(uploadDir, req.file.filename)); } catch {}
+            resource_type: 'image',
+            use_filename: true,
+            unique_filename: false,
+            overwrite: true,
+            type: 'upload'
+          });
+          if (uploadResult?.secure_url) {
+            finalUrl = uploadResult.secure_url;
+            try { fs.unlinkSync(path.join(uploadDir, req.file.filename)); } catch {}
+          }
+        } catch (cloudErr) {
+          console.warn('[favicon] Cloudinary upload failed, keeping local file:', cloudErr.message);
         }
-      } catch (cloudErr) {
-        console.warn('[favicon] Cloudinary upload failed, keeping local file:', cloudErr.message);
+    }
+    // Inline as data URI when Cloudinary not configured to persist across restarts
+    if (!hasCloudinaryCreds) {
+      try {
+        const filePath = path.join(uploadDir, req.file.filename);
+        const buf = fs.readFileSync(filePath);
+        const b64 = buf.toString('base64');
+        const mime = req.file.mimetype || 'image/png';
+        finalUrl = `data:${mime};base64,${b64}`;
+        try { fs.unlinkSync(filePath); } catch {}
+      } catch (inlineErr) {
+        console.warn('[favicon] Failed to inline favicon, leaving relative path:', inlineErr.message);
       }
     }
 
     settings.favicon = finalUrl;
     await settings.save();
 
-    // Prepare absolute URL
+    // Prepare absolute (or inline) URL
     const absoluteUrl = settings.favicon ? toAbsolute(req, settings.favicon) : settings.favicon;
 
-    // Broadcast minimal update with absolute URL (so clients on different origins can consume directly)
+    // Broadcast minimal update with absolute / inline URL (so clients on different origins can consume directly)
     try {
       const broadcast = req.app.get('broadcastToClients');
       if (typeof broadcast === 'function') {
@@ -550,7 +564,7 @@ router.post('/upload/favicon', adminAuth, upload.single('file'), async (req, res
       }
     } catch {}
 
-    res.json({ url: absoluteUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
+    res.json({ url: absoluteUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'inline' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
