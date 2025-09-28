@@ -102,39 +102,55 @@ export const getProducts = async (req, res) => {
 // Aggregate available filter facets from active products
 export const getProductFilters = async (req, res) => {
   try {
-    // Build same base query so facets reflect currently filtered subset
+    // If category param is not a 24-hex ObjectId, try to resolve by slug or name
+    let originalCategoryParam = req.query.category;
+    if (originalCategoryParam && (typeof originalCategoryParam !== 'string' || !/^[a-fA-F0-9]{24}$/.test(originalCategoryParam))) {
+      const catDoc = await Category.findOne({ $or: [ { slug: originalCategoryParam }, { name: new RegExp(`^${String(originalCategoryParam)}$`, 'i') } ] }).select('_id');
+      if (catDoc) {
+        req.query.category = catDoc._id.toString();
+      }
+    }
+
     const matchStage = buildProductQuery(req.query);
+
+    // Simplified aggregation avoiding nested arrays causing 500 errors when categories is null
     const pipeline = [
       { $match: matchStage },
-      { $project: { price: 1, category: 1, categories: 1, colors: 1 } },
-      { $facet: {
-          base: [
-            { $group: { _id: null, minPrice: { $min: '$price' }, maxPrice: { $max: '$price' }, categories: { $addToSet: '$category' }, extraCategories: { $addToSet: '$categories' } } },
-          ],
-          priceSamples: [ { $project: { price: 1 } } ],
-          colorSize: [
-            { $unwind: { path: '$colors', preserveNullAndEmptyArrays: true } },
-            { $unwind: { path: '$colors.sizes', preserveNullAndEmptyArrays: true } },
-            { $group: { _id: null, colors: { $addToSet: '$colors.name' }, sizes: { $addToSet: '$colors.sizes.name' } } }
-          ]
-        }
-      },
       { $project: {
-          base: { $arrayElemAt: ['$base', 0] },
-          colorSize: { $arrayElemAt: ['$colorSize', 0] }
-        }
+          price: 1,
+          category: 1,
+          colors: 1,
+          categoriesArray: { $cond: { if: { $and: [ { $ne: ['$categories', null] }, { $isArray: '$categories' } ] }, then: '$categories', else: [] } }
+        } 
+      },
+      { $unwind: { path: '$colors', preserveNullAndEmptyArrays: true } },
+      { $unwind: { path: '$colors.sizes', preserveNullAndEmptyArrays: true } },
+      { $unwind: { path: '$categoriesArray', preserveNullAndEmptyArrays: true } },
+      { $group: {
+          _id: null,
+          minPrice: { $min: '$price' },
+          maxPrice: { $max: '$price' },
+          categories: { $addToSet: '$category' },
+          extraCategories: { $addToSet: '$categoriesArray' },
+          colorObjects: { $addToSet: { name: '$colors.name', code: '$colors.code' } },
+          colors: { $addToSet: '$colors.name' },
+          sizes: { $addToSet: '$colors.sizes.name' }
+        } 
       },
       { $project: {
           _id: 0,
-          minPrice: '$base.minPrice',
-            maxPrice: '$base.maxPrice',
-            categories: { $setUnion: [ '$base.categories', { $reduce: { input: '$base.extraCategories', initialValue: [], in: { $setUnion: ['$$value', '$$this'] } } } ] },
-            colors: '$colorSize.colors',
-            sizes: '$colorSize.sizes'
-        }
-      }
+          minPrice: 1,
+          maxPrice: 1,
+          categories: { $setUnion: [ '$categories', '$extraCategories' ] },
+          colors: 1,
+          colorObjects: 1,
+          sizes: 1
+        } }
     ];
-    const result = await Product.aggregate(pipeline);
+    const result = await Product.aggregate(pipeline).catch(err => { 
+      console.error('Aggregation error (getProductFilters):', err); 
+      throw err; 
+    });
 
     // Populate category names
     let categoryDocs = [];
@@ -172,6 +188,13 @@ export const getProductFilters = async (req, res) => {
       if (bi !== -1) return 1;
       return a.localeCompare(b);
     });
+    // Normalize distinct color objects (remove nulls, duplicates)
+    const seen = new Set();
+    data.colorObjects = (data.colorObjects || []).filter(c => c && c.name).filter(c => {
+      const key = c.name + '|' + (c.code||'');
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a,b)=> a.name.localeCompare(b.name));
     data.colors = data.colors.sort();
 
     res.json(data);
