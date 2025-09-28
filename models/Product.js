@@ -162,6 +162,11 @@ const productSchema = new mongoose.Schema({
   ogTitle: { type: String },
   ogDescription: { type: String },
   ogImage: { type: String },
+  // Version counter for images array (used for client cache busting)
+  imagesVersion: {
+    type: Number,
+    default: 0
+  },
   // Per-product size guide (دليل المقاسات)
   sizeGuide: {
     // Optional title (e.g., "Men's Shirts")
