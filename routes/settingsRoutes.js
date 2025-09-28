@@ -10,6 +10,21 @@ import cloudinary from '../services/cloudinaryClient.js';
 
 const router = express.Router();
 
+// Helper: convert relative asset path (e.g. /uploads/xxx.png) to absolute URL for client consumption
+function toAbsolute(req, url) {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url; // already absolute (Cloudinary etc.)
+  try {
+    const protoHeader = (req.headers['x-forwarded-proto'] || '').toString();
+    const proto = protoHeader.split(',')[0] || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || '').toString().split(',')[0];
+    if (!host) return url; // fallback – return as-is
+    return `${proto}://${host}${url.startsWith('/') ? '' : '/'}${url}`;
+  } catch {
+    return url;
+  }
+}
+
 // Configure multer for uploads (project-level /uploads)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +94,12 @@ router.get('/', async (req, res) => {
       };
       delete obj.googleAuth.clientSecret;
     }
+    // Normalize favicon (and optionally logo) to absolute so other-origins (Netlify) can load it
+    try {
+      if (obj.favicon) obj.favicon = toAbsolute(req, obj.favicon);
+      if (obj.logo && obj.logo.startsWith('/uploads/')) obj.logo = toAbsolute(req, obj.logo);
+      if (obj.authBackgroundImage && obj.authBackgroundImage.startsWith('/uploads/')) obj.authBackgroundImage = toAbsolute(req, obj.authBackgroundImage);
+    } catch {}
     res.json(obj);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -326,7 +347,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             logoMaxHeightMobile: settings.logoMaxHeightMobile,
             logoWidthDesktop: settings.logoWidthDesktop,
             // Favicon
-            favicon: settings.favicon,
+            favicon: settings.favicon ? toAbsolute(req, settings.favicon) : settings.favicon,
             // ATC theme colors (newly persisted)
             atcBgColor: settings.atcBgColor,
             atcTextColor: settings.atcTextColor,
@@ -344,6 +365,11 @@ router.put('/', settingsWriteGuard, async (req, res) => {
 
     // Sanitize response like GET
     const savedObj = settings.toObject();
+    try {
+      if (savedObj.favicon) savedObj.favicon = toAbsolute(req, savedObj.favicon);
+      if (savedObj.logo && savedObj.logo.startsWith('/uploads/')) savedObj.logo = toAbsolute(req, savedObj.logo);
+      if (savedObj.authBackgroundImage && savedObj.authBackgroundImage.startsWith('/uploads/')) savedObj.authBackgroundImage = toAbsolute(req, savedObj.authBackgroundImage);
+    } catch {}
     if (savedObj.googleAuth) {
       savedObj.googleAuth = {
         enabled: !!savedObj.googleAuth.enabled,
@@ -494,15 +520,18 @@ router.post('/upload/favicon', adminAuth, upload.single('file'), async (req, res
     settings.favicon = finalUrl;
     await settings.save();
 
-    // Broadcast minimal update
+    // Prepare absolute URL
+    const absoluteUrl = settings.favicon ? toAbsolute(req, settings.favicon) : settings.favicon;
+
+    // Broadcast minimal update with absolute URL (so clients on different origins can consume directly)
     try {
       const broadcast = req.app.get('broadcastToClients');
       if (typeof broadcast === 'function') {
-        broadcast({ type: 'settings_updated', data: { favicon: settings.favicon } });
+        broadcast({ type: 'settings_updated', data: { favicon: absoluteUrl } });
       }
     } catch {}
 
-    res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
+    res.json({ url: absoluteUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
