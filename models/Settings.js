@@ -93,6 +93,8 @@ const settingsSchema = new mongoose.Schema({
   newArrivalsMobileHeadingColor: { type: String, default: '' }, // e.g. '#ffffff'
   newArrivalsMobileTextColor: { type: String, default: '' }, // e.g. '#e5e7eb'
   newArrivalsMobileOverlayBg: { type: String, default: '' }, // e.g. 'rgba(0,0,0,0.4)' or hex with opacity via CSS
+  newArrivalsMobileProductNameColor: { type: String, default: '' }, // product name color on mobile New Arrivals grid
+  newArrivalsMobileProductPriceColor: { type: String, default: '' }, // product price color on mobile New Arrivals grid
   // Navigation styles (top bar + mega menu)
   navCategoryFontColor: { type: String, default: '' },
   navCategoryFontSize: { type: String, enum: ['small','medium','large'], default: 'medium' },
