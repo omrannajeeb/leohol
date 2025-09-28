@@ -235,7 +235,7 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   try {
-    const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, categories: incomingCategories, isActive: incomingIsActive, slug: incomingSlug, metaTitle, metaDescription, metaKeywords, ogTitle, ogDescription, ogImage, ...updateData } = req.body;
+    const { sizes, colors: incomingColors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, categories: incomingCategories, isActive: incomingIsActive, slug: incomingSlug, metaTitle, metaDescription, metaKeywords, ogTitle, ogDescription, ogImage, ...updateData } = req.body;
     // Start with shallow copy of remaining fields
     const updateDataSanitized = { ...updateData };
 
@@ -339,7 +339,36 @@ export const updateProduct = async (req, res) => {
       }
     }
 
+    // If colors provided, sanitize & attach (including nested images & sizes)
+    if (incomingColors !== undefined) {
+      if (!Array.isArray(incomingColors)) {
+        return res.status(400).json({ message: 'colors must be an array' });
+      }
+      const cleanedColors = incomingColors.map(c => {
+        if (!c || typeof c !== 'object') return null;
+        const name = c.name ? String(c.name).trim() : '';
+        const code = c.code ? String(c.code).trim() : '';
+        if (!name || !code) return null;
+        const images = Array.isArray(c.images) ? c.images.filter(i => typeof i === 'string' && i.trim()).map(i => i.trim()).slice(0,5) : [];
+        const sizesArr = Array.isArray(c.sizes)
+          ? c.sizes.filter(s => s && s.name).map(s => ({
+              name: String(s.name).trim(),
+              stock: Number.isFinite(Number(s.stock)) && Number(s.stock) >= 0 ? Number(s.stock) : 0
+            })).slice(0,50)
+          : [];
+        return { name, code, images, sizes: sizesArr };
+      }).filter(Boolean);
+      updateDataSanitized.colors = cleanedColors;
+
+      // Derive total stock from color sizes if not explicitly provided
+      if ((!updateDataSanitized.stock || updateDataSanitized.stock === 0) && cleanedColors.length) {
+        const total = cleanedColors.reduce((sum, col) => sum + col.sizes.reduce((s, sz) => s + (sz.stock || 0), 0), 0);
+        updateDataSanitized.stock = total;
+      }
+    }
+
     // Update product document with sanitized data
+    const productBefore = await Product.findById(req.params.id).lean();
     const product = await Product.findByIdAndUpdate(
       req.params.id,
       updateDataSanitized,
@@ -350,8 +379,8 @@ export const updateProduct = async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    // Update inventory if sizes or colors changed
-    if (Array.isArray(sizes) && Array.isArray(colors)) {
+    // Update inventory if sizes or colors changed (legacy path; prefer color-level sizes now)
+    if (Array.isArray(sizes) && Array.isArray(incomingColors)) {
       // Get current inventory
       const currentInventory = await Inventory.find({ product: product._id });
 
@@ -408,6 +437,24 @@ export const updateProduct = async (req, res) => {
         })
       );
     }
+
+    // If only color images changed (and no top-level images updated) we can bump imagesVersion for cache busting
+    try {
+      if (incomingColors !== undefined && productBefore) {
+        const beforeColorImages = (productBefore.colors || []).flatMap(c => c.images || []);
+        const afterColorImages = (product.colors || []).flatMap(c => c.images || []);
+        const changed = beforeColorImages.length !== afterColorImages.length || beforeColorImages.some((img, idx) => img !== afterColorImages[idx]);
+        if (changed && (!updateDataSanitized.images || updateDataSanitized.images.length === 0)) {
+            // bump imagesVersion to force clients to refresh derived images
+            if (typeof product.imagesVersion !== 'number') {
+              product.imagesVersion = 1;
+            } else {
+              product.imagesVersion += 1;
+            }
+            await product.save();
+        }
+      }
+    } catch (e) { /* silent */ }
 
     res.json(product);
   } catch (error) {
