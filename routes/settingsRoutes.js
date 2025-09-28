@@ -359,6 +359,11 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             newArrivalsMobileOverlayBg: settings.newArrivalsMobileOverlayBg,
             newArrivalsMobileProductNameColor: settings.newArrivalsMobileProductNameColor,
             newArrivalsMobileProductPriceColor: settings.newArrivalsMobileProductPriceColor,
+            // New Arrivals banner
+            newArrivalsBannerEnabled: settings.newArrivalsBannerEnabled,
+            newArrivalsBannerImage: settings.newArrivalsBannerImage ? toAbsolute(req, settings.newArrivalsBannerImage) : settings.newArrivalsBannerImage,
+            newArrivalsBannerHeading: settings.newArrivalsBannerHeading,
+            newArrivalsBannerSubheading: settings.newArrivalsBannerSubheading,
             // Auth pages background image
             authBackgroundImage: settings.authBackgroundImage,
             // Auth provider toggles
@@ -376,6 +381,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
   if (savedObj.favicon) savedObj.favicon = toAbsolute(req, savedObj.favicon);
       if (savedObj.logo && savedObj.logo.startsWith('/uploads/')) savedObj.logo = toAbsolute(req, savedObj.logo);
       if (savedObj.authBackgroundImage && savedObj.authBackgroundImage.startsWith('/uploads/')) savedObj.authBackgroundImage = toAbsolute(req, savedObj.authBackgroundImage);
+      if (savedObj.newArrivalsBannerImage && savedObj.newArrivalsBannerImage.startsWith('/uploads/')) savedObj.newArrivalsBannerImage = toAbsolute(req, savedObj.newArrivalsBannerImage);
     } catch {}
     if (savedObj.googleAuth) {
       savedObj.googleAuth = {
@@ -501,6 +507,68 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
     } catch {}
 
   res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'inline' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Upload New Arrivals banner image (admin only)
+router.post('/upload/new-arrivals-banner', adminAuth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    let settings = await Settings.findOne();
+    if (!settings) settings = new Settings();
+
+    let finalUrl = `/uploads/${req.file.filename}`;
+    const hasCloudinaryCreds = await hasCloudinaryCredentials();
+    if (hasCloudinaryCreds) {
+      try {
+        await ensureCloudinaryConfig();
+        const uploadResult = await cloudinary.uploader.upload(path.join(uploadDir, req.file.filename), {
+          folder: 'settings/new-arrivals',
+          resource_type: 'image',
+          use_filename: true,
+          unique_filename: false,
+          overwrite: true
+        });
+        if (uploadResult?.secure_url) {
+          finalUrl = uploadResult.secure_url;
+          try { fs.unlinkSync(path.join(uploadDir, req.file.filename)); } catch {}
+        }
+      } catch (cloudErr) {
+        console.warn('[new-arrivals-banner] Cloudinary upload failed, keeping local file:', cloudErr.message);
+      }
+    }
+
+    // Inline when no Cloudinary to persist across ephemeral storage
+    if (!hasCloudinaryCreds) {
+      try {
+        const filePath = path.join(uploadDir, req.file.filename);
+        const buf = fs.readFileSync(filePath);
+        const b64 = buf.toString('base64');
+        const mime = req.file.mimetype || 'image/png';
+        finalUrl = `data:${mime};base64,${b64}`;
+        try { fs.unlinkSync(filePath); } catch {}
+      } catch (inlineErr) {
+        console.warn('[new-arrivals-banner] Failed to inline image, using relative path:', inlineErr.message);
+      }
+    }
+
+    settings.newArrivalsBannerImage = finalUrl;
+    await settings.save();
+
+    // Broadcast minimal update
+    try {
+      const broadcast = req.app.get('broadcastToClients');
+      if (typeof broadcast === 'function') {
+        broadcast({ type: 'settings_updated', data: { newArrivalsBannerImage: toAbsolute(req, finalUrl) } });
+      }
+    } catch {}
+
+    res.json({ url: toAbsolute(req, finalUrl) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
