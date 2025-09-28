@@ -340,6 +340,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             // Contact info fields
             phone: settings.phone,
             address: settings.address,
+            addressLink: settings.addressLink,
             email: settings.email,
             name: settings.name,
             // Added logo & logo sizing so all clients update immediately when admin changes logo
@@ -389,6 +390,10 @@ router.put('/', settingsWriteGuard, async (req, res) => {
         clientId: savedObj.googleAuth.clientId || '',
         secretSet: !!(savedObj.googleAuth.clientSecret && savedObj.googleAuth.clientSecret.length > 0)
       };
+    }
+    // Ensure addressLink always present for clients (empty string fallback)
+    if (typeof savedObj.addressLink === 'undefined') {
+      savedObj.addressLink = '';
     }
     res.json(savedObj);
   } catch (error) {
