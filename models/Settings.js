@@ -19,6 +19,13 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     default: '123 Fashion Street, NY 10001'
   },
+  // Optional public URL or map link for the store location (e.g. Google Maps / Waze / custom contact page)
+  // Example: https://www.google.com/maps/search/?api=1&query=Your+Store+Address
+  // Keep as simple string (not required) to avoid over‑validating; frontend can ensure proper URL format.
+  addressLink: {
+    type: String,
+    default: ''
+  },
   currency: {
     type: String,
     required: true,
