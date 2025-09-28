@@ -29,79 +29,65 @@ import cloudinary from '../services/cloudinaryClient.js';
 // Currency conversion disabled for product storage/display; prices are stored and served as-is in store currency
 
 // Get all products
+// Shared query builder so both product listing and facet endpoints derive sizes/colors from actual filtered product set
+function buildProductQuery(params) {
+  const { search, category, categories, isNew, isFeatured, onSale, includeInactive, colors, sizes, size, color, minPrice, maxPrice } = params;
+  let query = {};
+
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } }
+    ];
+  }
+
+  if (category) {
+    query.$and = [...(query.$and || []), { $or: [ { category }, { categories: category } ] }];
+  }
+  if (categories) {
+    const list = String(categories).split(',').map(s => s.trim()).filter(Boolean);
+    if (list.length) {
+      query.$and = [ ...(query.$and || []), { $or: [ { category: { $in: list } }, { categories: { $in: list } } ] } ];
+    }
+  }
+  if (isNew === 'true') query.isNew = true;
+  if (isFeatured === 'true') query.isFeatured = true;
+  if (onSale === 'true') query.$expr = { $gt: ["$originalPrice", "$price"] };
+
+  if (minPrice != null || maxPrice != null) {
+    const priceFilter = {};
+    if (minPrice != null) priceFilter.$gte = Number(minPrice);
+    if (maxPrice != null) priceFilter.$lte = Number(maxPrice);
+    query.price = priceFilter;
+  }
+
+  const colorList = [color, ...(colors ? String(colors).split(',') : [])]
+    .filter(Boolean).map(c => c.trim());
+  if (colorList.length) query['colors.name'] = { $in: colorList };
+
+  const sizeList = [size, ...(sizes ? String(sizes).split(',') : [])]
+    .filter(Boolean).map(s => s.trim());
+  if (sizeList.length) query['colors.sizes.name'] = { $in: sizeList };
+
+  if (!includeInactive || includeInactive === 'false') query.isActive = { $ne: false };
+  return query;
+}
+
 export const getProducts = async (req, res) => {
   try {
-  const { search, category, categories, isNew, isFeatured, onSale, includeInactive } = req.query;
-    
-    let query = {};
-    
-    // Apply filters
-    if (search) {
-      query = {
-        $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } },
-          { category: { $regex: search, $options: 'i' } }
-        ]
-      };
-    }
-
-    if (category) {
-      query.$or = [
-        ...(query.$or || []),
-        { category },
-        { categories: category }
-      ];
-    }
-
-    if (categories) {
-      // Expect comma-separated list
-      const list = String(categories).split(',').map(s => s.trim()).filter(Boolean);
-      if (list.length) {
-        query.$and = [ ...(query.$and || []), { $or: [ { category: { $in: list } }, { categories: { $in: list } } ] } ];
-      }
-    }
-
-    if (isNew === 'true') {
-      query.isNew = true;
-    }
-
-    if (isFeatured === 'true') {
-      query.isFeatured = true;
-    }
-
-    // New: onSale filter (products where originalPrice > price)
-    if (onSale === 'true') {
-      // Use $expr so it works even if discount field wasn't computed yet
-      query.$expr = { $gt: ["$originalPrice", "$price"] };
-    }
-
-    // Exclude inactive by default
-    if (!includeInactive || includeInactive === 'false') {
-      query.isActive = { $ne: false };
-    }
+    const query = buildProductQuery(req.query);
 
     const products = await Product.find(query)
-      // Include colors (names + images + sizes) so frontend can derive fallback images when top-level images empty
       .select('+colors.name +colors.code +colors.images +colors.sizes')
       .populate('relatedProducts')
-      .populate({
-        path: 'reviews.user',
-        select: 'name email image'
-      })
+      .populate({ path: 'reviews.user', select: 'name email image' })
       .sort({ isFeatured: -1, order: 1, createdAt: -1 });
 
-    // Get inventory data for each product
     const productsWithInventory = await Promise.all(
       products.map(async (product) => {
         const inventory = await Inventory.find({ product: product._id });
         const productObj = product.toObject();
-        
-        // Add inventory data to each product
         productObj.inventory = inventory;
-        
-        // No runtime currency conversion
-        
         return productObj;
       })
     );
@@ -110,6 +96,88 @@ export const getProducts = async (req, res) => {
   } catch (error) {
     console.error('Error fetching products:', error);
     res.status(500).json({ message: 'Failed to fetch products' });
+  }
+};
+
+// Aggregate available filter facets from active products
+export const getProductFilters = async (req, res) => {
+  try {
+    // Build same base query so facets reflect currently filtered subset
+    const matchStage = buildProductQuery(req.query);
+    const pipeline = [
+      { $match: matchStage },
+      { $project: { price: 1, category: 1, categories: 1, colors: 1 } },
+      { $facet: {
+          base: [
+            { $group: { _id: null, minPrice: { $min: '$price' }, maxPrice: { $max: '$price' }, categories: { $addToSet: '$category' }, extraCategories: { $addToSet: '$categories' } } },
+          ],
+          priceSamples: [ { $project: { price: 1 } } ],
+          colorSize: [
+            { $unwind: { path: '$colors', preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: '$colors.sizes', preserveNullAndEmptyArrays: true } },
+            { $group: { _id: null, colors: { $addToSet: '$colors.name' }, sizes: { $addToSet: '$colors.sizes.name' } } }
+          ]
+        }
+      },
+      { $project: {
+          base: { $arrayElemAt: ['$base', 0] },
+          colorSize: { $arrayElemAt: ['$colorSize', 0] }
+        }
+      },
+      { $project: {
+          _id: 0,
+          minPrice: '$base.minPrice',
+            maxPrice: '$base.maxPrice',
+            categories: { $setUnion: [ '$base.categories', { $reduce: { input: '$base.extraCategories', initialValue: [], in: { $setUnion: ['$$value', '$$this'] } } } ] },
+            colors: '$colorSize.colors',
+            sizes: '$colorSize.sizes'
+        }
+      }
+    ];
+    const result = await Product.aggregate(pipeline);
+
+    // Populate category names
+    let categoryDocs = [];
+    if (result[0]?.categories?.length) {
+      categoryDocs = await Category.find({ _id: { $in: result[0].categories } }).select('name slug');
+    }
+    const data = result[0] || { minPrice: 0, maxPrice: 0, categories: [], colors: [], sizes: [] };
+    // Derive price buckets (5 ranges) adaptive to min/max
+    if (data.minPrice != null && data.maxPrice != null) {
+      const span = Math.max(0, data.maxPrice - data.minPrice);
+      if (span > 0) {
+        const step = span / 5; // 5 buckets
+        const buckets = [];
+        let start = data.minPrice;
+        for (let i = 0; i < 5; i++) {
+          let end = i === 4 ? data.maxPrice : Math.round((data.minPrice + step * (i + 1))*100)/100;
+          buckets.push({ min: Math.round(start*100)/100, max: Math.round(end*100)/100 });
+          start = end;
+        }
+        data.priceBuckets = buckets;
+      } else {
+        data.priceBuckets = [{ min: data.minPrice, max: data.maxPrice }];
+      }
+    } else {
+      data.priceBuckets = [];
+    }
+    data.categories = categoryDocs.map(c => ({ id: c._id, name: c.name, slug: c.slug }));
+    // Sort sizes in common order XS,S,M,L,XL then alphanumeric
+    const sizeOrder = ['XS','S','M','L','XL','XXL'];
+    data.sizes = data.sizes.sort((a,b)=>{
+      const ai = sizeOrder.indexOf(a);
+      const bi = sizeOrder.indexOf(b);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.localeCompare(b);
+    });
+    data.colors = data.colors.sort();
+
+    res.json(data);
+  } catch (err) {
+    console.error('Error building product filters:', err);
+    res.status(500).json({ message: 'Failed to build product filters' });
   }
 };
 
