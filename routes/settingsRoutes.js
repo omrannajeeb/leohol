@@ -440,8 +440,8 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
     if (!settings) settings = new Settings();
 
     // Decide whether to push to Cloudinary (more persistent) or keep local file.
-    let finalUrl = `/uploads/${req.file.filename}`; // default local path
-    const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
+  let finalUrl = `/uploads/${req.file.filename}`; // default local path (ephemeral if host has no persistent disk)
+  const hasCloudinaryCreds = !!(process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME);
 
     if (hasCloudinaryCreds) {
       try {
@@ -463,6 +463,25 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
       }
     }
 
+    // If no Cloudinary credentials are configured we currently store a relative /uploads path.
+    // On many hosts (Render free tier, some serverless containers) this directory is ephemeral
+    // and wiped on each redeploy/restart – causing the auth background to "disappear".
+    // To make the background persist, inline it as a data URI in Mongo when Cloudinary isn't used.
+    if (!hasCloudinaryCreds) {
+      try {
+        const filePath = path.join(uploadDir, req.file.filename);
+        const buf = fs.readFileSync(filePath);
+        const b64 = buf.toString('base64');
+        const mime = req.file.mimetype || 'image/png';
+        // Store as data URI so frontend can render without hitting /uploads
+        finalUrl = `data:${mime};base64,${b64}`;
+        // Optionally remove temp file to save disk (it won't be referenced anymore)
+        try { fs.unlinkSync(filePath); } catch {}
+      } catch (inlineErr) {
+        console.warn('[auth-background] Failed to inline image, falling back to relative path:', inlineErr.message);
+      }
+    }
+
     settings.authBackgroundImage = finalUrl;
     await settings.save();
 
@@ -474,7 +493,7 @@ router.post('/upload/auth-background', adminAuth, upload.single('file'), async (
       }
     } catch {}
 
-    res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'local' });
+  res.json({ url: finalUrl, stored: hasCloudinaryCreds ? 'cloudinary' : 'inline' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
