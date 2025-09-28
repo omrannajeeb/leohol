@@ -235,21 +235,26 @@ export const createProduct = async (req, res) => {
 // Update product
 export const updateProduct = async (req, res) => {
   try {
-  const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, categories: incomingCategories, isActive: incomingIsActive, slug: incomingSlug, metaTitle, metaDescription, metaKeywords, ogTitle, ogDescription, ogImage, ...updateData } = req.body;
+    const { sizes, colors, videoUrls: incomingVideoUrls, sizeGuide: incomingSizeGuide, categories: incomingCategories, isActive: incomingIsActive, slug: incomingSlug, metaTitle, metaDescription, metaKeywords, ogTitle, ogDescription, ogImage, ...updateData } = req.body;
+    // Start with shallow copy of remaining fields
+    const updateDataSanitized = { ...updateData };
+
+    // Assign meta / slug fields after declaration
     if (incomingSlug !== undefined) {
       updateDataSanitized.slug = String(incomingSlug).trim() || undefined;
     }
     if (metaTitle !== undefined) updateDataSanitized.metaTitle = metaTitle;
     if (metaDescription !== undefined) updateDataSanitized.metaDescription = metaDescription;
     if (metaKeywords !== undefined) {
-      if (Array.isArray(metaKeywords)) updateDataSanitized.metaKeywords = metaKeywords.map(k=>String(k).trim()).filter(Boolean);
-      else if (typeof metaKeywords === 'string') updateDataSanitized.metaKeywords = metaKeywords.split(',').map(k=>k.trim()).filter(Boolean);
+      if (Array.isArray(metaKeywords)) {
+        updateDataSanitized.metaKeywords = metaKeywords.map(k => String(k).trim()).filter(Boolean);
+      } else if (typeof metaKeywords === 'string') {
+        updateDataSanitized.metaKeywords = metaKeywords.split(',').map(k => k.trim()).filter(Boolean);
+      }
     }
     if (ogTitle !== undefined) updateDataSanitized.ogTitle = ogTitle;
     if (ogDescription !== undefined) updateDataSanitized.ogDescription = ogDescription;
     if (ogImage !== undefined) updateDataSanitized.ogImage = ogImage;
-    // Sanitize and normalize incoming fields
-    const updateDataSanitized = { ...updateData };
 
     // Handle categories array update if provided
     if (incomingCategories !== undefined) {
