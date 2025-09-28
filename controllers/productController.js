@@ -82,6 +82,8 @@ export const getProducts = async (req, res) => {
     }
 
     const products = await Product.find(query)
+      // Include colors (names + images + sizes) so frontend can derive fallback images when top-level images empty
+      .select('+colors.name +colors.code +colors.images +colors.sizes')
       .populate('relatedProducts')
       .populate({
         path: 'reviews.user',
@@ -540,7 +542,7 @@ export const searchProducts = async (req, res) => {
     }
 
     const products = await Product.find({ $or: orConditions, isActive: { $ne: false } })
-      .select('name price images category')
+      .select('name price images category colors')
       .limit(12)
       .sort('-createdAt');
     if (process.env.NODE_ENV !== 'production') {
