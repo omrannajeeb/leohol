@@ -357,6 +357,8 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             newArrivalsMobileHeadingColor: settings.newArrivalsMobileHeadingColor,
             newArrivalsMobileTextColor: settings.newArrivalsMobileTextColor,
             newArrivalsMobileOverlayBg: settings.newArrivalsMobileOverlayBg,
+            newArrivalsMobileProductNameColor: settings.newArrivalsMobileProductNameColor,
+            newArrivalsMobileProductPriceColor: settings.newArrivalsMobileProductPriceColor,
             // Auth pages background image
             authBackgroundImage: settings.authBackgroundImage,
             // Auth provider toggles
