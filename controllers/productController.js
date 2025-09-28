@@ -102,102 +102,81 @@ export const getProducts = async (req, res) => {
 // Aggregate available filter facets from active products
 export const getProductFilters = async (req, res) => {
   try {
-    // If category param is not a 24-hex ObjectId, try to resolve by slug or name
-    let originalCategoryParam = req.query.category;
-    if (originalCategoryParam && (typeof originalCategoryParam !== 'string' || !/^[a-fA-F0-9]{24}$/.test(originalCategoryParam))) {
-      const catDoc = await Category.findOne({ $or: [ { slug: originalCategoryParam }, { name: new RegExp(`^${String(originalCategoryParam)}$`, 'i') } ] }).select('_id');
-      if (catDoc) {
-        req.query.category = catDoc._id.toString();
-      }
+    // Resolve category param (slug/name) to id for consistency
+    const catParam = req.query.category;
+    if (catParam && typeof catParam === 'string' && !/^[a-fA-F0-9]{24}$/.test(catParam)) {
+      const catDoc = await Category.findOne({ $or: [ { slug: catParam }, { name: new RegExp(`^${catParam}$`, 'i') } ] }).select('_id');
+      if (catDoc) req.query.category = catDoc._id.toString(); else delete req.query.category; // remove invalid
     }
 
-    const matchStage = buildProductQuery(req.query);
+    const baseQuery = buildProductQuery(req.query);
 
-    // Simplified aggregation avoiding nested arrays causing 500 errors when categories is null
-    const pipeline = [
-      { $match: matchStage },
-      { $project: {
-          price: 1,
-          category: 1,
-          colors: 1,
-          categoriesArray: { $cond: { if: { $and: [ { $ne: ['$categories', null] }, { $isArray: '$categories' } ] }, then: '$categories', else: [] } }
-        } 
-      },
+    // Pull min & max price fast
+    const priceAgg = await Product.aggregate([
+      { $match: baseQuery },
+      { $group: { _id: null, minPrice: { $min: '$price' }, maxPrice: { $max: '$price' } } }
+    ]);
+    const minPrice = priceAgg[0]?.minPrice ?? 0;
+    const maxPrice = priceAgg[0]?.maxPrice ?? 0;
+
+    // Distinct sets (returns primitives)
+    const [primaryCats, secondaryCats, sizeNames, colorNames] = await Promise.all([
+      Product.distinct('category', baseQuery),
+      Product.distinct('categories', baseQuery),
+      Product.distinct('colors.sizes.name', baseQuery),
+      Product.distinct('colors.name', baseQuery)
+    ]);
+
+    // For color objects (name + code) we need a tiny aggregation because distinct can't combine fields
+    const colorObjDocs = await Product.aggregate([
+      { $match: baseQuery },
       { $unwind: { path: '$colors', preserveNullAndEmptyArrays: true } },
-      { $unwind: { path: '$colors.sizes', preserveNullAndEmptyArrays: true } },
-      { $unwind: { path: '$categoriesArray', preserveNullAndEmptyArrays: true } },
-      { $group: {
-          _id: null,
-          minPrice: { $min: '$price' },
-          maxPrice: { $max: '$price' },
-          categories: { $addToSet: '$category' },
-          extraCategories: { $addToSet: '$categoriesArray' },
-          colorObjects: { $addToSet: { name: '$colors.name', code: '$colors.code' } },
-          colors: { $addToSet: '$colors.name' },
-          sizes: { $addToSet: '$colors.sizes.name' }
-        } 
-      },
-      { $project: {
-          _id: 0,
-          minPrice: 1,
-          maxPrice: 1,
-          categories: { $setUnion: [ '$categories', '$extraCategories' ] },
-          colors: 1,
-          colorObjects: 1,
-          sizes: 1
-        } }
-    ];
-    const result = await Product.aggregate(pipeline).catch(err => { 
-      console.error('Aggregation error (getProductFilters):', err); 
-      throw err; 
-    });
+      { $group: { _id: { name: '$colors.name', code: '$colors.code' } } }
+    ]);
+    const colorObjects = colorObjDocs
+      .map(d => ({ name: d._id.name, code: d._id.code }))
+      .filter(c => c.name);
 
-    // Populate category names
-    let categoryDocs = [];
-    if (result[0]?.categories?.length) {
-      categoryDocs = await Category.find({ _id: { $in: result[0].categories } }).select('name slug');
-    }
-    const data = result[0] || { minPrice: 0, maxPrice: 0, categories: [], colors: [], sizes: [] };
-    // Derive price buckets (5 ranges) adaptive to min/max
-    if (data.minPrice != null && data.maxPrice != null) {
-      const span = Math.max(0, data.maxPrice - data.minPrice);
-      if (span > 0) {
-        const step = span / 5; // 5 buckets
-        const buckets = [];
-        let start = data.minPrice;
-        for (let i = 0; i < 5; i++) {
-          let end = i === 4 ? data.maxPrice : Math.round((data.minPrice + step * (i + 1))*100)/100;
-          buckets.push({ min: Math.round(start*100)/100, max: Math.round(end*100)/100 });
-          start = end;
-        }
-        data.priceBuckets = buckets;
-      } else {
-        data.priceBuckets = [{ min: data.minPrice, max: data.maxPrice }];
-      }
-    } else {
-      data.priceBuckets = [];
-    }
-    data.categories = categoryDocs.map(c => ({ id: c._id, name: c.name, slug: c.slug }));
-    // Sort sizes in common order XS,S,M,L,XL then alphanumeric
+    const catIds = [...new Set([...(primaryCats||[]), ...(secondaryCats||[])])].filter(Boolean);
+    const categoryDocs = catIds.length ? await Category.find({ _id: { $in: catIds } }).select('name slug') : [];
+
+    // Sort & clean sizes
     const sizeOrder = ['XS','S','M','L','XL','XXL'];
-    data.sizes = data.sizes.sort((a,b)=>{
-      const ai = sizeOrder.indexOf(a);
-      const bi = sizeOrder.indexOf(b);
-      if (ai !== -1 && bi !== -1) return ai - bi;
-      if (ai !== -1) return -1;
-      if (bi !== -1) return 1;
-      return a.localeCompare(b);
+    const sizes = (sizeNames||[]).filter(Boolean).sort((a,b)=>{
+      const ai = sizeOrder.indexOf(a); const bi = sizeOrder.indexOf(b);
+      if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b);
     });
-    // Normalize distinct color objects (remove nulls, duplicates)
-    const seen = new Set();
-    data.colorObjects = (data.colorObjects || []).filter(c => c && c.name).filter(c => {
-      const key = c.name + '|' + (c.code||'');
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
+    const colors = (colorNames||[]).filter(Boolean).sort();
+    const seenColor = new Set();
+    const dedupColorObjects = colorObjects.filter(c=>{
+      const key = c.name+'|'+(c.code||'');
+      if (seenColor.has(key)) return false; seenColor.add(key); return true;
     }).sort((a,b)=> a.name.localeCompare(b.name));
-    data.colors = data.colors.sort();
 
-    res.json(data);
+    // Adaptive price buckets
+    let priceBuckets = [];
+    if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
+      const span = maxPrice - minPrice;
+      const step = span / 5;
+      let start = minPrice;
+      for (let i=0;i<5;i++) {
+        let end = i===4 ? maxPrice : minPrice + step*(i+1);
+        priceBuckets.push({ min: Number(start.toFixed(2)), max: Number(end.toFixed(2)) });
+        start = end;
+      }
+    } else if (minPrice === maxPrice) {
+      priceBuckets = [{ min: minPrice, max: maxPrice }];
+    }
+
+    res.json({
+      minPrice,
+      maxPrice,
+      priceBuckets,
+      sizes,
+      colors,
+      colorObjects: dedupColorObjects,
+      categories: categoryDocs.map(c => ({ id: c._id, name: c.name, slug: c.slug }))
+    });
   } catch (err) {
     console.error('Error building product filters:', err);
     res.status(500).json({ message: 'Failed to build product filters' });
