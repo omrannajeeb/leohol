@@ -68,6 +68,21 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const app = express();
 
+// Detect accidental corruption (e.g., browser console noise pasted) in critical route files
+try {
+  const corruptPattern = /^\s*index-[A-Za-z0-9_-]+\.js:\d+ \[Violation\]/;
+  const settingsRoutePath = path.resolve(__dirname, 'routes', 'settingsRoutes.js');
+  if (fs.existsSync(settingsRoutePath)) {
+    const firstLine = fs.readFileSync(settingsRoutePath, 'utf8').split(/\r?\n/, 1)[0];
+    if (corruptPattern.test(firstLine)) {
+      console.error('[startup][corrupt-file] Detected extraneous console log line at top of settingsRoutes.js. First line:', firstLine);
+      console.error('[startup][corrupt-file] Please remove this line and redeploy. The application will likely crash with SyntaxError otherwise.');
+    }
+  }
+} catch (e) {
+  console.warn('[startup][corrupt-check] Unable to inspect settingsRoutes.js:', e.message);
+}
+
 // Middleware
 // Lightweight request logging & version header
 let APP_VERSION = process.env.APP_VERSION || '';
@@ -84,6 +99,11 @@ app.use((req, res, next) => {
   const authHeader = req.header('Authorization');
   // Defer logging until response finished
   res.setHeader('X-App-Version', APP_VERSION);
+  // Explicit Permissions-Policy to allow geolocation (self) and suppress generic violation warnings.
+  // Adjust origins as needed (e.g., add your Netlify domain inside quotes) or remove geolocation if not desired.
+  if (!res.getHeader('Permissions-Policy')) {
+    res.setHeader('Permissions-Policy', 'geolocation=(self)');
+  }
   res.on('finish', () => {
     const duration = Date.now() - start;
     const user = req.user ? `${req.user._id}:${req.user.role}` : 'anon';
