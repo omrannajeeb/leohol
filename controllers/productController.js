@@ -26,6 +26,7 @@ import Warehouse from '../models/Warehouse.js';
 import { validateProductData } from '../utils/validation.js';
 import { handleProductImages } from '../utils/imageHandler.js';
 import cloudinary from '../services/cloudinaryClient.js';
+import { cacheGet, cacheSet } from '../utils/cache/simpleCache.js';
 // Currency conversion disabled for product storage/display; prices are stored and served as-is in store currency
 
 // Get all products
@@ -102,6 +103,7 @@ export const getProducts = async (req, res) => {
 // Aggregate available filter facets from active products
 export const getProductFilters = async (req, res) => {
   try {
+    const start = Date.now();
     // Resolve category param (slug/name) to id for consistency
     const catParam = req.query.category;
     if (catParam && typeof catParam === 'string' && !/^[a-fA-F0-9]{24}$/.test(catParam)) {
@@ -111,13 +113,33 @@ export const getProductFilters = async (req, res) => {
 
     const baseQuery = buildProductQuery(req.query);
 
-    // Pull min & max price fast
+    // Build cache key (category + selected filters subset) - avoid including transient params like random query order
+    const cacheKeyParts = [
+      'pf',
+      req.query.category || 'all',
+      req.query.colors || '-',
+      req.query.sizes || '-',
+      req.query.minPrice || '-',
+      req.query.maxPrice || '-'
+    ];
+    const cacheKey = cacheKeyParts.join('|');
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, _cached: true, _ms: Date.now() - start });
+    }
+
+    // Pull min & max price fast (lean pipeline)
     const priceAgg = await Product.aggregate([
       { $match: baseQuery },
       { $group: { _id: null, minPrice: { $min: '$price' }, maxPrice: { $max: '$price' } } }
-    ]);
-    const minPrice = priceAgg[0]?.minPrice ?? 0;
-    const maxPrice = priceAgg[0]?.maxPrice ?? 0;
+    ]).allowDiskUse(false);
+    let minPrice = priceAgg[0]?.minPrice;
+    let maxPrice = priceAgg[0]?.maxPrice;
+    // If no products matched, keep them null so frontend can hide price filter gracefully
+    if (typeof minPrice === 'undefined' || typeof maxPrice === 'undefined') {
+      minPrice = null;
+      maxPrice = null;
+    }
 
     // Distinct sets (returns primitives)
     const [primaryCats, secondaryCats, sizeNames, colorNames] = await Promise.all([
@@ -132,51 +154,83 @@ export const getProductFilters = async (req, res) => {
       { $match: baseQuery },
       { $unwind: { path: '$colors', preserveNullAndEmptyArrays: true } },
       { $group: { _id: { name: '$colors.name', code: '$colors.code' } } }
-    ]);
+    ]).allowDiskUse(false);
     const colorObjects = colorObjDocs
       .map(d => ({ name: d._id.name, code: d._id.code }))
       .filter(c => c.name);
 
     const catIds = [...new Set([...(primaryCats||[]), ...(secondaryCats||[])])].filter(Boolean);
-    const categoryDocs = catIds.length ? await Category.find({ _id: { $in: catIds } }).select('name slug') : [];
+  const categoryDocs = catIds.length ? await Category.find({ _id: { $in: catIds } }).select('name slug').lean() : [];
 
-    // Sort & clean sizes
+    // Normalize & dedupe (case-insensitive)
     const sizeOrder = ['XS','S','M','L','XL','XXL'];
-    const sizes = (sizeNames||[]).filter(Boolean).sort((a,b)=>{
-      const ai = sizeOrder.indexOf(a); const bi = sizeOrder.indexOf(b);
+    const seenSizesCI = new Map();
+    (sizeNames||[]).forEach(s => { if (!s) return; const key = String(s).trim(); if (!key) return; const ci = key.toUpperCase(); if (!seenSizesCI.has(ci)) seenSizesCI.set(ci, key); });
+    const sizes = Array.from(seenSizesCI.values()).sort((a,b)=>{
+      const ai = sizeOrder.indexOf(a.toUpperCase()); const bi = sizeOrder.indexOf(b.toUpperCase());
       if (ai !== -1 && bi !== -1) return ai - bi; if (ai !== -1) return -1; if (bi !== -1) return 1; return a.localeCompare(b);
     });
-    const colors = (colorNames||[]).filter(Boolean).sort();
-    const seenColor = new Set();
-    const dedupColorObjects = colorObjects.filter(c=>{
-      const key = c.name+'|'+(c.code||'');
-      if (seenColor.has(key)) return false; seenColor.add(key); return true;
-    }).sort((a,b)=> a.name.localeCompare(b.name));
+    const seenColorsCI = new Map();
+    (colorNames||[]).forEach(c => { if (!c) return; const key = String(c).trim(); if (!key) return; const ci = key.toLowerCase(); if (!seenColorsCI.has(ci)) seenColorsCI.set(ci, key); });
+    const colors = Array.from(seenColorsCI.values()).sort((a,b)=> a.localeCompare(b));
+    const seenColorObjCI = new Set();
+    const dedupColorObjects = colorObjects.filter(c=>{ if (!c || !c.name) return false; const nm = String(c.name).trim(); if (!nm) return false; const code = c.code ? String(c.code).trim() : undefined; const key = nm.toLowerCase()+'|'+(code||''); if (seenColorObjCI.has(key)) return false; seenColorObjCI.add(key); c.name = nm; if (code) c.code = code; return true; }).sort((a,b)=> a.name.localeCompare(b.name));
 
-    // Adaptive price buckets
-    let priceBuckets = [];
-    if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
-      const span = maxPrice - minPrice;
-      const step = span / 5;
-      let start = minPrice;
-      for (let i=0;i<5;i++) {
-        let end = i===4 ? maxPrice : minPrice + step*(i+1);
-        priceBuckets.push({ min: Number(start.toFixed(2)), max: Number(end.toFixed(2)) });
-        start = end;
+    // Adaptive "nice" price buckets
+    function buildPriceBuckets(minP, maxP) {
+      const buckets = [];
+      if (minP == null || maxP == null) return buckets;
+      if (minP === maxP) {
+        // Single price for all products – no useful range filtering
+        return [];
       }
-    } else if (minPrice === maxPrice) {
-      priceBuckets = [{ min: minPrice, max: maxPrice }];
+      const span = maxP - minP;
+      const desired = 5; // target bucket count
+      const rawStep = span / desired;
+      const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+      const residual = rawStep / magnitude;
+      let niceMultiplier;
+      if (residual <= 1) niceMultiplier = 1; else if (residual <= 2) niceMultiplier = 2; else if (residual <= 5) niceMultiplier = 5; else niceMultiplier = 10;
+      const step = niceMultiplier * magnitude;
+      // Start bucket at a floored nice boundary
+      let current = Math.floor(minP / step) * step;
+      // Guard against underflow below zero if minP is small positive
+      if (current < 0 && minP >= 0) current = 0;
+      // Generate until we pass maxP
+      while (current < maxP) {
+        const next = current + step;
+        // Use null max (open ended) for last bucket if remaining span is less than half a step
+        if (next >= maxP) {
+          buckets.push({ min: Number(current.toFixed(2)), max: null });
+          break;
+        } else {
+          buckets.push({ min: Number(current.toFixed(2)), max: Number(next.toFixed(2)) });
+        }
+        // Safety to avoid infinite loops
+        if (buckets.length > 12) break;
+        current = next;
+      }
+      return buckets;
     }
+    let priceBuckets = buildPriceBuckets(minPrice, maxPrice);
+    // Collapse duplicate buckets (same min & max)
+    // Collapse duplicate buckets (same min & max)
+    const seenBuckets = new Set();
+    priceBuckets = priceBuckets.filter(b => { const key = b.min+'|'+(b.max==null?'up':b.max); if (seenBuckets.has(key)) return false; seenBuckets.add(key); return true; });
 
-    res.json({
-      minPrice,
-      maxPrice,
+    const payload = {
+      minPrice: minPrice == null ? null : Number(minPrice.toFixed(2)),
+      maxPrice: maxPrice == null ? null : Number(maxPrice.toFixed(2)),
       priceBuckets,
       sizes,
       colors,
       colorObjects: dedupColorObjects,
-      categories: categoryDocs.map(c => ({ id: c._id, name: c.name, slug: c.slug }))
-    });
+      categories: categoryDocs.map(c => ({ id: c._id, name: c.name, slug: c.slug })),
+      _ms: Date.now() - start
+    };
+    // Cache for short TTL (e.g., 30s) to balance freshness vs speed
+    cacheSet(cacheKey, payload, 30 * 1000);
+    res.json(payload);
   } catch (err) {
     console.error('Error building product filters:', err);
     res.status(500).json({ message: 'Failed to build product filters' });
