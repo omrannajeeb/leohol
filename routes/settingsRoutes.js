@@ -289,6 +289,10 @@ router.put('/', settingsWriteGuard, async (req, res) => {
       if (Object.prototype.hasOwnProperty.call(req.body, 'headerIconAssets')) {
         try { settings.markModified('headerIconAssets'); } catch {}
       }
+      // Simple boolean toggles
+      if (Object.prototype.hasOwnProperty.call(req.body, 'showColorFilter')) {
+        settings.showColorFilter = !!req.body.showColorFilter;
+      }
     }
 
     await settings.save();
@@ -325,6 +329,7 @@ router.put('/', settingsWriteGuard, async (req, res) => {
             footerStyle: settings.footerStyle,
             productCardStyle: settings.productCardStyle,
             productGridStyle: settings.productGridStyle,
+            showColorFilter: settings.showColorFilter,
             // Component behavior
             heroAutoplayMs: settings.heroAutoplayMs,
             // Scroll-to-top
