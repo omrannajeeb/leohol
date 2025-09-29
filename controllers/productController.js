@@ -644,10 +644,23 @@ export const searchProducts = async (req, res) => {
       orConditions.push({ categories: { $in: categoryIds } });
     }
 
-    const products = await Product.find({ $or: orConditions, isActive: { $ne: false } })
-      .select('name price images category colors')
+    const raw = await Product.find({ $or: orConditions, isActive: { $ne: false } })
+      .select('name price images category colors reviews')
       .limit(12)
       .sort('-createdAt');
+
+    // Shape response: include reviewCount but omit potentially large reviews array
+    const products = raw.map(p => ({
+      _id: p._id,
+      name: p.name,
+      price: p.price,
+      images: p.images,
+      category: p.category,
+      colors: p.colors,
+      reviewCount: Array.isArray(p.reviews) ? p.reviews.length : 0,
+      isNew: p.isNew,
+      rating: p.rating
+    }));
     if (process.env.NODE_ENV !== 'production') {
       console.log(`searchProducts query="${query}" matches=${products.length} categoriesMatched=${categoryIds.length}`);
     }
