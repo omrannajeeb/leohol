@@ -188,6 +188,8 @@ const settingsSchema = new mongoose.Schema({
     enum: ['standard', 'compact', 'masonry', 'list', 'wide', 'gallery', 'carousel'],
     default: 'standard'
   },
+  // Product listing filter visibility toggles
+  showColorFilter: { type: Boolean, default: true }, // allow hiding color facet from storefront
   
   // Social media links
   socialLinks: {
@@ -589,6 +591,10 @@ settingsSchema.statics.createDefaultSettings = async function() {
       }
       if (!settings.productGridStyle) {
         updateData.productGridStyle = 'standard';
+        needsUpdate = true;
+      }
+      if (typeof settings.showColorFilter === 'undefined') {
+        updateData.showColorFilter = true;
         needsUpdate = true;
       }
       // Ensure new nav style fields exist
