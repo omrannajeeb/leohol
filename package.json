@@ -13,7 +13,6 @@
     "preview": "vite preview",
     "server": "node index.js",
     "start": "node server/index.js",
-    "start:verify": "node server/scripts/verifyIntegrity.js && node server/index.js",
     "gen:vapid": "node server/scripts/genVapid.js",
     "migrate:brands:dry": "node server/scripts/migrateBrandImagesToCloudinary.js",
     "migrate:brands:apply": "node server/scripts/migrateBrandImagesToCloudinary.js --apply",
