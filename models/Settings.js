@@ -547,6 +547,12 @@ settingsSchema.add({
       mode: { type: String, enum: ['sandbox', 'live'], default: 'sandbox' },
       clientId: { type: String, default: '' },
       secret: { type: String, default: '' }
+    },
+    // Visibility / availability flags for each checkout payment option
+    visibility: {
+      card: { type: Boolean, default: true },      // credit/debit card (local form)
+      cod: { type: Boolean, default: true },       // cash on delivery
+      paypal: { type: Boolean, default: true }     // controls showing PayPal option in addition to paypal.enabled
     }
   }
 });
@@ -692,6 +698,23 @@ settingsSchema.statics.createDefaultSettings = async function() {
             mode: 'sandbox',
             clientId: '',
             secret: ''
+          },
+          visibility: {
+            card: true,
+            cod: true,
+            paypal: true
+          }
+        };
+        needsUpdate = true;
+      }
+      // Ensure payments.visibility exists if paypal existed previously
+      if (settings.payments && !settings.payments.visibility) {
+        updateData.payments = {
+          ...(updateData.payments || settings.payments),
+          visibility: {
+            card: true,
+            cod: true,
+            paypal: true
           }
         };
         needsUpdate = true;
