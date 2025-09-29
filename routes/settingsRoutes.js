@@ -76,16 +76,22 @@ router.get('/', async (req, res) => {
         apiSecret: obj.cloudinary.apiSecret ? '***' : ''
       };
     }
-    if (obj.payments && obj.payments.paypal) {
-      obj.payments = {
-        ...obj.payments,
-        paypal: {
+    if (obj.payments) {
+      if (obj.payments.paypal) {
+        obj.payments.paypal = {
           enabled: !!obj.payments.paypal.enabled,
           mode: obj.payments.paypal.mode || 'sandbox',
           clientId: obj.payments.paypal.clientId ? obj.payments.paypal.clientId : '',
           secret: obj.payments.paypal.secret ? '***' : ''
-        }
-      };
+        };
+      }
+      if (obj.payments.visibility) {
+        obj.payments.visibility = {
+          card: !!obj.payments.visibility.card,
+          cod: !!obj.payments.visibility.cod,
+          paypal: !!obj.payments.visibility.paypal
+        };
+      }
     }
     if (obj.googleAuth) {
       obj.googleAuth = {
@@ -221,12 +227,29 @@ router.put('/', settingsWriteGuard, async (req, res) => {
       // Payments: PayPal
       if (req.body.payments && typeof req.body.payments === 'object') {
         settings.payments = settings.payments || {};
-        const incoming = req.body.payments.paypal || {};
-        settings.payments.paypal = settings.payments.paypal || { enabled: false, mode: 'sandbox', clientId: '', secret: '' };
-        if (typeof incoming.enabled !== 'undefined') settings.payments.paypal.enabled = !!incoming.enabled;
-        if (typeof incoming.mode === 'string') settings.payments.paypal.mode = incoming.mode;
-        if (typeof incoming.clientId === 'string') settings.payments.paypal.clientId = incoming.clientId;
-        if (typeof incoming.secret === 'string') settings.payments.paypal.secret = incoming.secret === '***' ? prevPaypalSecret : incoming.secret;
+        // Handle paypal sub-object
+        if (req.body.payments.paypal) {
+          const incoming = req.body.payments.paypal || {};
+          settings.payments.paypal = settings.payments.paypal || { enabled: false, mode: 'sandbox', clientId: '', secret: '' };
+          if (typeof incoming.enabled !== 'undefined') settings.payments.paypal.enabled = !!incoming.enabled;
+          if (typeof incoming.mode === 'string') settings.payments.paypal.mode = incoming.mode;
+          if (typeof incoming.clientId === 'string') settings.payments.paypal.clientId = incoming.clientId;
+          if (typeof incoming.secret === 'string') settings.payments.paypal.secret = incoming.secret === '***' ? prevPaypalSecret : incoming.secret;
+        }
+        // Handle visibility sub-object
+        if (req.body.payments.visibility && typeof req.body.payments.visibility === 'object') {
+          settings.payments.visibility = settings.payments.visibility || { card: true, cod: true, paypal: true };
+          const vis = req.body.payments.visibility;
+          // Basic validation: require booleans only
+          ['card','cod','paypal'].forEach(k => {
+            if (typeof vis[k] !== 'undefined') {
+              if (typeof vis[k] !== 'boolean') {
+                return res.status(400).json({ message: `payments.visibility.${k} must be a boolean` });
+              }
+              settings.payments.visibility[k] = vis[k];
+            }
+          });
+        }
         try { settings.markModified('payments'); } catch {}
       }
 
