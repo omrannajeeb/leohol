@@ -80,6 +80,9 @@ export const getProducts = async (req, res) => {
 
     const products = await Product.find(query)
       .select('+colors.name +colors.code +colors.images +colors.sizes')
+      // Populate primary & additional categories so client can show names
+      .populate('category')
+      .populate('categories')
       .populate('relatedProducts')
       .populate({ path: 'reviews.user', select: 'name email image' })
       .sort({ isFeatured: -1, order: 1, createdAt: -1 });
@@ -214,6 +217,8 @@ export const getProduct = async (req, res) => {
   // Currency query param ignored; no conversion performed
     
     const product = await Product.findById(req.params.id)
+      .populate('category')
+      .populate('categories')
       .populate('relatedProducts')
       .populate('addOns')
       .populate({
@@ -286,7 +291,9 @@ export const createProduct = async (req, res) => {
       videoUrls,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
     });
-    const savedProduct = await product.save();
+  let savedProduct = await product.save();
+  // Populate categories before responding so client gets names immediately
+  savedProduct = await savedProduct.populate(['category','categories']);
 
 
     // Find or create a default warehouse
@@ -322,7 +329,7 @@ export const createProduct = async (req, res) => {
       user: req.user?._id
     }).save();
 
-    res.status(201).json(savedProduct);
+  res.status(201).json(savedProduct);
   } catch (error) {
     console.error('Error creating product:', error);
     res.status(400).json({ message: error.message });
@@ -466,7 +473,7 @@ export const updateProduct = async (req, res) => {
 
     // Update product document with sanitized data
     const productBefore = await Product.findById(req.params.id).lean();
-    const product = await Product.findByIdAndUpdate(
+    let product = await Product.findByIdAndUpdate(
       req.params.id,
       updateDataSanitized,
       { new: true, runValidators: true }
@@ -553,7 +560,8 @@ export const updateProduct = async (req, res) => {
       }
     } catch (e) { /* silent */ }
 
-    res.json(product);
+  product = await product.populate(['category','categories']);
+  res.json(product);
   } catch (error) {
     console.error('Error updating product:', error);
     res.status(400).json({ message: error.message });
