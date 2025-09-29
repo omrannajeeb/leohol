@@ -133,13 +133,8 @@ export const getProductFilters = async (req, res) => {
       { $match: baseQuery },
       { $group: { _id: null, minPrice: { $min: '$price' }, maxPrice: { $max: '$price' } } }
     ]).allowDiskUse(false);
-    let minPrice = priceAgg[0]?.minPrice;
-    let maxPrice = priceAgg[0]?.maxPrice;
-    // If no products matched, keep them null so frontend can hide price filter gracefully
-    if (typeof minPrice === 'undefined' || typeof maxPrice === 'undefined') {
-      minPrice = null;
-      maxPrice = null;
-    }
+    const minPrice = priceAgg[0]?.minPrice ?? 0;
+    const maxPrice = priceAgg[0]?.maxPrice ?? 0;
 
     // Distinct sets (returns primitives)
     const [primaryCats, secondaryCats, sizeNames, colorNames] = await Promise.all([
@@ -176,51 +171,27 @@ export const getProductFilters = async (req, res) => {
     const seenColorObjCI = new Set();
     const dedupColorObjects = colorObjects.filter(c=>{ if (!c || !c.name) return false; const nm = String(c.name).trim(); if (!nm) return false; const code = c.code ? String(c.code).trim() : undefined; const key = nm.toLowerCase()+'|'+(code||''); if (seenColorObjCI.has(key)) return false; seenColorObjCI.add(key); c.name = nm; if (code) c.code = code; return true; }).sort((a,b)=> a.name.localeCompare(b.name));
 
-    // Adaptive "nice" price buckets
-    function buildPriceBuckets(minP, maxP) {
-      const buckets = [];
-      if (minP == null || maxP == null) return buckets;
-      if (minP === maxP) {
-        // All products share one price – return a single selectable bucket
-        return [{ min: Number(minP.toFixed(2)), max: Number(maxP.toFixed(2)) }];
+    // Adaptive price buckets
+    let priceBuckets = [];
+    if (minPrice !== null && maxPrice !== null && maxPrice > minPrice) {
+      const span = maxPrice - minPrice;
+      const step = span / 5;
+      let start = minPrice;
+      for (let i=0;i<5;i++) {
+        let end = i===4 ? maxPrice : minPrice + step*(i+1);
+        priceBuckets.push({ min: Number(start.toFixed(2)), max: Number(end.toFixed(2)) });
+        start = end;
       }
-      const span = maxP - minP;
-      const desired = 5; // target bucket count
-      const rawStep = span / desired;
-      const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
-      const residual = rawStep / magnitude;
-      let niceMultiplier;
-      if (residual <= 1) niceMultiplier = 1; else if (residual <= 2) niceMultiplier = 2; else if (residual <= 5) niceMultiplier = 5; else niceMultiplier = 10;
-      const step = niceMultiplier * magnitude;
-      // Start bucket at a floored nice boundary
-      let current = Math.floor(minP / step) * step;
-      // Guard against underflow below zero if minP is small positive
-      if (current < 0 && minP >= 0) current = 0;
-      // Generate until we pass maxP
-      while (current < maxP) {
-        const next = current + step;
-        // Use null max (open ended) for last bucket if remaining span is less than half a step
-        if (next >= maxP) {
-          buckets.push({ min: Number(current.toFixed(2)), max: null });
-          break;
-        } else {
-          buckets.push({ min: Number(current.toFixed(2)), max: Number(next.toFixed(2)) });
-        }
-        // Safety to avoid infinite loops
-        if (buckets.length > 12) break;
-        current = next;
-      }
-      return buckets;
+    } else if (minPrice === maxPrice) {
+      priceBuckets = [{ min: minPrice, max: maxPrice }];
     }
-    let priceBuckets = buildPriceBuckets(minPrice, maxPrice);
-    // Collapse duplicate buckets (same min & max)
     // Collapse duplicate buckets (same min & max)
     const seenBuckets = new Set();
-    priceBuckets = priceBuckets.filter(b => { const key = b.min+'|'+(b.max==null?'up':b.max); if (seenBuckets.has(key)) return false; seenBuckets.add(key); return true; });
+    priceBuckets = priceBuckets.filter(b => { const key = b.min+'|'+b.max; if (seenBuckets.has(key)) return false; seenBuckets.add(key); return true; });
 
     const payload = {
-      minPrice: minPrice == null ? null : Number(minPrice.toFixed(2)),
-      maxPrice: maxPrice == null ? null : Number(maxPrice.toFixed(2)),
+      minPrice,
+      maxPrice,
       priceBuckets,
       sizes,
       colors,
