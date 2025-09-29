@@ -181,8 +181,8 @@ export const getProductFilters = async (req, res) => {
       const buckets = [];
       if (minP == null || maxP == null) return buckets;
       if (minP === maxP) {
-        // Single price for all products – no useful range filtering
-        return [];
+        // All products share one price – return a single selectable bucket
+        return [{ min: Number(minP.toFixed(2)), max: Number(maxP.toFixed(2)) }];
       }
       const span = maxP - minP;
       const desired = 5; // target bucket count
