@@ -2,12 +2,12 @@ import asyncHandler from 'express-async-handler';
 import Brand from '../models/Brand.js';
 
 export const listBrands = asyncHandler(async (req, res) => {
-  const brands = await Brand.find().sort({ order: 1, createdAt: -1 });
+  const brands = await Brand.find().sort({ order: 1, createdAt: 1 });
   res.json(brands);
 });
 
 export const listActiveBrands = asyncHandler(async (req, res) => {
-  const brands = await Brand.find({ isActive: true }).sort({ order: 1, createdAt: -1 });
+  const brands = await Brand.find({ isActive: true }).sort({ order: 1, createdAt: 1 });
   res.json(brands);
 });
 
