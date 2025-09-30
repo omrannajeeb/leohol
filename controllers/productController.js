@@ -76,6 +76,33 @@ function buildProductQuery(params) {
 
 export const getProducts = async (req, res) => {
   try {
+    // Allow category to be provided as slug or name (not just ObjectId) just like filters endpoint.
+    // Also: if a non-existent category slug/name is supplied, return an empty list instead of all products.
+    let forceEmpty = false;
+    const catParam = req.query.category;
+    if (catParam && typeof catParam === 'string' && !/^[a-fA-F0-9]{24}$/.test(catParam)) {
+      try {
+        const catDoc = await Category.findOne({
+          $or: [
+            { slug: catParam },
+            { name: new RegExp(`^${catParam}$`, 'i') }
+          ]
+        }).select('_id');
+        if (catDoc) {
+          req.query.category = catDoc._id.toString();
+        } else {
+          // Category slug/name not found – force empty result set (explicitly communicate)
+          forceEmpty = true;
+        }
+      } catch (e) {
+        // On lookup error, better to return empty than all products for an invalid category token
+        forceEmpty = true;
+      }
+    }
+
+    if (forceEmpty) {
+      return res.json([]);
+    }
     const query = buildProductQuery(req.query);
 
     const products = await Product.find(query)
