@@ -32,7 +32,7 @@ import { cacheGet, cacheSet } from '../utils/cache/simpleCache.js';
 // Get all products
 // Shared query builder so both product listing and facet endpoints derive sizes/colors from actual filtered product set
 function buildProductQuery(params) {
-  const { search, category, categories, isNew, isFeatured, onSale, includeInactive, colors, sizes, size, color, minPrice, maxPrice } = params;
+  const { search, category, categories, isNew, isFeatured, onSale, includeInactive, colors, sizes, size, color, minPrice, maxPrice, primaryOnly, strictCategory } = params;
   let query = {};
 
   if (search) {
@@ -43,7 +43,13 @@ function buildProductQuery(params) {
   }
 
   if (category) {
-    query.$and = [...(query.$and || []), { $or: [ { category }, { categories: category } ] }];
+    // If primaryOnly or strictCategory specified, match only primary category field
+    if (primaryOnly === 'true' || strictCategory === 'true') {
+      query.$and = [...(query.$and || []), { category }];
+    } else {
+      // Default behavior: product matches if category is primary or listed in additional categories
+      query.$and = [...(query.$and || []), { $or: [ { category }, { categories: category } ] }];
+    }
   }
   if (categories) {
     const list = String(categories).split(',').map(s => s.trim()).filter(Boolean);
