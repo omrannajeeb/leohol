@@ -44,6 +44,6 @@ export const reorderBrands = asyncHandler(async (req, res) => {
   if (!Array.isArray(order)) return res.status(400).json({ message: 'Invalid order payload' });
   const ops = order.map((o) => ({ updateOne: { filter: { _id: o.id }, update: { $set: { order: o.order } } } }));
   if (ops.length) await Brand.bulkWrite(ops);
-  const brands = await Brand.find().sort({ order: 1, createdAt: -1 });
+  const brands = await Brand.find().sort({ order: 1, createdAt: 1 });
   res.json(brands);
 });
