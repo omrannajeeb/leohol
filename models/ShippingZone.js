@@ -16,6 +16,13 @@ const shippingZoneSchema = new mongoose.Schema({
     required: true,
     trim: true
   }],
+  // Uniform price applied to all cities/countries in this zone (optional)
+  zonePrice: {
+    type: Number,
+    required: false,
+    default: null,
+    min: 0
+  },
   regions: [{
     type: String,
     trim: true
