@@ -147,6 +147,11 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Client-provided shipping fee (for flat fee UI) to preserve original user-facing amount
+  clientShippingFee: {
+    type: Number,
+    default: 0
+  },
   deliveryStatusUpdated: {
     type: Date
   },
