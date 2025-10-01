@@ -18,6 +18,7 @@ import {
   testConnection,
   validateCompanyConfig,
   batchAssignOrders,
+  batchSendOrders,
 } from '../controllers/deliveryController.js';
 
 const router = express.Router();
@@ -51,6 +52,8 @@ router.post('/companies/:id/calculate-fee', calculateDeliveryFee);
 router.post('/send', deliveryAdminGuard, sendOrder);
 // Batch assign multiple orders to a delivery company
 router.post('/assign/batch', deliveryAdminGuard, batchAssignOrders);
+// Batch send multiple orders to provider (full integration flow)
+router.post('/send/batch', deliveryAdminGuard, batchSendOrders);
 
 // Legacy/alternate send path used by some components
 router.post('/order', deliveryAdminGuard, sendOrderWithOrderPayload);
