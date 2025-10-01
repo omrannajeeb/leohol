@@ -142,16 +142,6 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  // Shipping fee (can mirror deliveryFee for backward compatibility)
-  shippingFee: {
-    type: Number,
-    default: 0
-  },
-  // Client-provided shipping fee (for flat fee UI) to preserve original user-facing amount
-  clientShippingFee: {
-    type: Number,
-    default: 0
-  },
   deliveryStatusUpdated: {
     type: Date
   },
@@ -172,34 +162,7 @@ const orderSchema = new mongoose.Schema({
     type: String
   }
 }, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
-
-// Virtual: If shippingFee not explicitly set but deliveryFee exists, expose it
-orderSchema.virtual('effectiveShippingFee').get(function() {
-  if (typeof this.shippingFee === 'number' && this.shippingFee > 0) return this.shippingFee;
-  return this.deliveryFee || 0;
-});
-
-// Virtual: Total including shipping (non-destructive; does not mutate stored totalAmount)
-orderSchema.virtual('totalWithShipping').get(function() {
-  const base = this.totalAmount || 0;
-  const ship = (typeof this.shippingFee === 'number' && this.shippingFee > 0)
-    ? this.shippingFee
-    : (this.deliveryFee || 0);
-  return base + ship;
-});
-
-// Keep shippingFee and deliveryFee loosely in sync (one-way: if deliveryFee changes and shippingFee is 0)
-orderSchema.pre('save', function(next) {
-  if (this.isModified('deliveryFee')) {
-    if ((!this.shippingFee || this.shippingFee === 0) && this.deliveryFee) {
-      this.shippingFee = this.deliveryFee;
-    }
-  }
-  next();
+  timestamps: true
 });
 
 // Add index for orderNumber
