@@ -4,7 +4,8 @@ import {
   createOrder,
   getUserOrders,
   getAllOrders,
-  updateOrderStatus
+  updateOrderStatus,
+  recalculateShipping
 } from '../controllers/orderController.js';
 
 const router = express.Router();
@@ -21,5 +22,6 @@ router.get('/my-orders', auth, getUserOrders);
 // Admin routes
 router.get('/all', adminAuth, getAllOrders);
 router.put('/:id/status', adminAuth, updateOrderStatus);
+router.post('/:id/recalculate-shipping', adminAuth, recalculateShipping);
 
 export default router;
