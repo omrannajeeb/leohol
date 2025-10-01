@@ -352,6 +352,72 @@ export const batchAssignOrders = async (req, res) => {
   }
 };
 
+// Batch send multiple orders to a delivery company using existing sendOrder logic components
+export const batchSendOrders = async (req, res) => {
+  const { orderIds, companyId, companyCode, deliveryFee = 0, stopOnError = false } = req.body || {};
+  if (!Array.isArray(orderIds) || !orderIds.length) {
+    return res.status(StatusCodes.BAD_REQUEST).json({ message: 'orderIds array is required' });
+  }
+  let company = null;
+  if (companyId) {
+    company = await DeliveryCompany.findById(companyId);
+  } else if (companyCode) {
+    company = await DeliveryCompany.findOne({ code: companyCode });
+  }
+  if (!company) {
+    company = await DeliveryCompany.findOne({ isActive: true, isDefault: true })
+      || await DeliveryCompany.findOne({ isActive: true }).sort('name');
+  }
+  if (!company) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Delivery company not found' });
+
+  const results = [];
+  for (const orderId of orderIds) {
+    try {
+      // Reuse portions of sendOrder flow (without duplicating entire code) by manually replicating essential steps
+      const order = await Order.findById(orderId);
+      if (!order) throw new Error('Order not found');
+
+      // Validate configuration & required mappings
+      const cfg = validateCompanyConfiguration(company.toObject());
+      if (!cfg.ok) {
+        throw Object.assign(new Error('Delivery company configuration incomplete'), { code: 'CONFIG_INVALID', details: cfg.issues });
+      }
+      const mappingCheck = validateRequiredMappings(order.toObject(), company.toObject());
+      if (!mappingCheck.ok) {
+        throw Object.assign(new Error('Missing required mapped fields'), { code: 'MAPPING_MISSING', missing: mappingCheck.missing });
+      }
+
+      const { trackingNumber, providerResponse, providerStatus } = await sendToCompany(order.toObject(), company.toObject(), { deliveryFee });
+      order.deliveryCompany = company._id;
+      order.deliveryStatus = mapStatus(company, providerStatus || 'assigned');
+      order.deliveryTrackingNumber = trackingNumber;
+      order.trackingNumber = trackingNumber; // legacy mirror
+      order.deliveryAssignedAt = new Date();
+      order.deliveryFee = deliveryFee || 0;
+      order.deliveryResponse = providerResponse;
+      await order.save();
+
+      results.push({ orderId, success: true, trackingNumber, status: order.deliveryStatus });
+    } catch (err) {
+      const entry = { orderId, success: false, error: err.message || 'Failed', code: err.code };
+      if (err.missing) entry.missing = err.missing;
+      results.push(entry);
+      if (stopOnError) break;
+    }
+  }
+
+  res.json({
+    success: results.every(r => r.success),
+    company: { id: String(company._id), name: company.name },
+    summary: {
+      total: orderIds.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length
+    },
+    results
+  });
+};
+
 // List delivery-related orders (simple list of orders with delivery info)
 export const listDeliveryOrders = async (req, res) => {
   const { orderId, limit = 50 } = req.query;
