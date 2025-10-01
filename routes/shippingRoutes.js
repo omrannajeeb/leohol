@@ -12,6 +12,8 @@ import {
   updateShippingRate,
   deleteShippingRate,
   calculateShippingFee,
+  getShippingOptions,
+  getConfiguredCities,
 } from '../controllers/shippingController.js';
 
 const router = express.Router();
@@ -36,27 +38,13 @@ router.route('/rates/:id')
   .put(adminAuth, updateShippingRate) // Admin-only: Update a shipping rate by ID
   .delete(adminAuth, deleteShippingRate); // Admin-only: Delete a shipping rate by ID
 
-// Shipping Fee Calculation Route
-router.post('/calculate', async (req, res) => {
-  try {
-    const { weight, dimensions, zoneId, rateId } = req.body;
+// Shipping Fee Calculation Route (supports city)
+router.post('/calculate', calculateShippingFee);
 
-    if (!weight || !dimensions || !zoneId || !rateId) {
-      return res.status(400).json({ message: 'Missing required fields for shipping fee calculation' });
-    }
+// Get options for a location (query params)
+router.get('/options', getShippingOptions);
 
-    // Call the controller function to calculate shipping fee
-    const fee = await calculateShippingFee(weight, dimensions, zoneId, rateId);
-    
-    if (!fee) {
-      return res.status(404).json({ message: 'Shipping fee calculation failed' });
-    }
-
-    res.json({ shippingFee: fee });
-  } catch (error) {
-    console.error('Error calculating shipping fee:', error);
-    res.status(500).json({ message: 'Error calculating shipping fee' });
-  }
-});
+// Get distinct configured cities (admin only)
+router.get('/cities', adminAuth, getConfiguredCities);
 
 export default router;
