@@ -15,11 +15,13 @@ export const calculateShippingFee = async ({ subtotal, weight, country, region, 
   try {
     // Find shipping zones that match the country or region
     let zones = await ShippingZone.findByCountry(country);
-    
     if (zones.length === 0 && region) {
       zones = await ShippingZone.findByRegion(region);
     }
-    
+    // Fallback: attempt city-based match if no zones and city provided (we repurpose countries field to hold cities)
+    if (zones.length === 0 && city) {
+      zones = await ShippingZone.find({ countries: { $in: [city] }, isActive: true });
+    }
     if (zones.length === 0) {
       throw new Error('No shipping zones found for the specified location');
     }
@@ -85,11 +87,13 @@ export const getAvailableShippingOptions = async ({ country, region, city, subto
   try {
     // Find shipping zones that match the country or region
     let zones = await ShippingZone.findByCountry(country);
-    
     if (zones.length === 0 && region) {
       zones = await ShippingZone.findByRegion(region);
     }
-    
+    // Fallback: attempt city-based mapping if provided
+    if (zones.length === 0 && city) {
+      zones = await ShippingZone.find({ countries: { $in: [city] }, isActive: true });
+    }
     if (zones.length === 0) {
       return [];
     }
