@@ -316,6 +316,42 @@ export const getDeliveryStatus = async (req, res) => {
   res.json({ success: true, ...status, status: internal, internalStatus: internal });
 };
 
+// Batch assign multiple orders to a delivery company (no external send, just assignment + optional tracking/status)
+export const batchAssignOrders = async (req, res) => {
+  try {
+    const { orderIds, companyId, trackingNumber, deliveryStatus, orderStatus } = req.body || {};
+    if (!Array.isArray(orderIds) || !orderIds.length) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: 'orderIds array is required' });
+    }
+    if (!companyId) {
+      return res.status(StatusCodes.BAD_REQUEST).json({ message: 'companyId is required' });
+    }
+    const company = await DeliveryCompany.findById(companyId);
+    if (!company) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Delivery company not found' });
+
+    const update = {
+      deliveryCompany: company._id,
+      deliveryAssignedAt: new Date()
+    };
+    if (trackingNumber) {
+      update.deliveryTrackingNumber = trackingNumber;
+      update.trackingNumber = trackingNumber; // legacy
+    }
+    if (deliveryStatus) update.deliveryStatus = deliveryStatus;
+    if (orderStatus) update.status = orderStatus;
+
+    const result = await Order.updateMany({ _id: { $in: orderIds } }, { $set: update });
+    res.json({
+      success: true,
+      message: 'Orders assigned to delivery company',
+      modifiedCount: result.modifiedCount || result.nModified || 0,
+      company: { id: String(company._id), name: company.name }
+    });
+  } catch (err) {
+    res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: err.message || 'Batch assignment failed' });
+  }
+};
+
 // List delivery-related orders (simple list of orders with delivery info)
 export const listDeliveryOrders = async (req, res) => {
   const { orderId, limit = 50 } = req.query;
