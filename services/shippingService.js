@@ -8,9 +8,10 @@ import ShippingRate from '../models/ShippingRate.js';
  * @param {number} params.weight - Total weight of items
  * @param {string} params.country - Destination country
  * @param {string} params.region - Destination region (optional)
+ * @param {string} params.city - Destination city (optional for city-specific rates)
  * @returns {Promise<number>} Calculated shipping fee
  */
-export const calculateShippingFee = async ({ subtotal, weight, country, region }) => {
+export const calculateShippingFee = async ({ subtotal, weight, country, region, city }) => {
   try {
     // Find shipping zones that match the country or region
     let zones = await ShippingZone.findByCountry(country);
@@ -23,11 +24,18 @@ export const calculateShippingFee = async ({ subtotal, weight, country, region }
       throw new Error('No shipping zones found for the specified location');
     }
     
+    const zoneIds = zones.map(z => z._id);
     // Get all shipping rates for the matching zones
     const allRates = [];
     for (const zone of zones) {
       const rates = await ShippingRate.findByZone(zone._id);
       allRates.push(...rates);
+    }
+
+    // If city provided, attempt to find city-specific overrides
+    let citySpecific = [];
+    if (city) {
+      citySpecific = await ShippingRate.findByCity(city, zoneIds);
     }
     
     if (allRates.length === 0) {
@@ -37,12 +45,13 @@ export const calculateShippingFee = async ({ subtotal, weight, country, region }
     // Calculate costs for all applicable rates
     const applicableRates = [];
     
-    for (const rate of allRates) {
+    const candidateRates = citySpecific.length ? citySpecific : allRates;
+    for (const rate of candidateRates) {
       const cost = rate.calculateCost(subtotal, weight);
       if (cost !== null) {
         applicableRates.push({
           rate,
-          cost,
+          cost: resolveCityCost(rate, cost, city),
           method: rate.method,
           name: rate.name
         });
@@ -72,7 +81,7 @@ export const calculateShippingFee = async ({ subtotal, weight, country, region }
  * @param {number} params.weight - Total weight (optional)
  * @returns {Promise<Array>} Available shipping options
  */
-export const getAvailableShippingOptions = async ({ country, region, subtotal = 0, weight = 0 }) => {
+export const getAvailableShippingOptions = async ({ country, region, city, subtotal = 0, weight = 0 }) => {
   try {
     // Find shipping zones that match the country or region
     let zones = await ShippingZone.findByCountry(country);
@@ -85,17 +94,25 @@ export const getAvailableShippingOptions = async ({ country, region, subtotal = 
       return [];
     }
     
+    const zoneIds = zones.map(z => z._id);
     // Get all shipping rates for the matching zones
     const allRates = [];
     for (const zone of zones) {
       const rates = await ShippingRate.findByZone(zone._id);
       allRates.push(...rates);
     }
+
+    // City-specific overrides
+    let citySpecific = [];
+    if (city) {
+      citySpecific = await ShippingRate.findByCity(city, zoneIds);
+    }
     
     // Calculate costs for all applicable rates
     const options = [];
     
-    for (const rate of allRates) {
+    const candidateRates = citySpecific.length ? citySpecific : allRates;
+    for (const rate of candidateRates) {
       const cost = rate.calculateCost(subtotal, weight);
       if (cost !== null) {
         options.push({
@@ -103,10 +120,29 @@ export const getAvailableShippingOptions = async ({ country, region, subtotal = 
           name: rate.name,
           description: rate.description,
           method: rate.method,
-          cost,
+          cost: resolveCityCost(rate, cost, city),
           zone: rate.zone.name,
           estimatedDays: rate.estimatedDays || null
         });
+      }
+    }
+
+    // Fallback: if a zone defines a uniform zonePrice include it (if not already represented by cheaper/equal rate)
+    for (const zone of zones) {
+      if (typeof zone.zonePrice === 'number' && zone.zonePrice >= 0) {
+        // If no existing option belongs to this zone with same or lower cost, add it
+        const hasEquivalent = options.some(o => o.zone === zone.name && o.cost <= zone.zonePrice);
+        if (!hasEquivalent) {
+          options.push({
+            id: `zonePrice:${zone._id}`,
+            name: `${zone.name} Standard`,
+            description: 'Zone base shipping',
+            method: 'zone_price',
+            cost: zone.zonePrice,
+            zone: zone.name,
+            estimatedDays: null
+          });
+        }
       }
     }
     
@@ -119,6 +155,16 @@ export const getAvailableShippingOptions = async ({ country, region, subtotal = 
     throw new Error(`Failed to get shipping options: ${error.message}`);
   }
 };
+
+// Helper to override cost if city entry exists with specific cost
+function resolveCityCost(rate, baseCost, city) {
+  if (!city || !rate.cities || !rate.cities.length) return baseCost;
+  const match = rate.cities.find(c => c.name && city && c.name.toLowerCase() === city.toLowerCase());
+  if (match && typeof match.cost === 'number') {
+    return match.cost;
+  }
+  return baseCost;
+}
 
 /**
  * Validate shipping address
