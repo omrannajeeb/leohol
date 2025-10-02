@@ -218,6 +218,12 @@ export function buildPayloadFromMappings(order, company) {
     } else if (m.transform === 'array_length') {
       const arr = m.sourceField ? getByPath(order, m.sourceField) : undefined;
       value = Array.isArray(arr) ? arr.length : 0;
+    } else if (m.transform === 'product_names') {
+      const items = getByPath(order, 'items') || [];
+      const names = Array.isArray(items) 
+        ? items.map(item => item.name).filter(Boolean)
+        : [];
+      value = names.length ? names.join(', ') : '';
     }
     if (value !== undefined) payload[m.targetField] = value;
   }
@@ -235,6 +241,8 @@ export function buildPayloadFromMappings(order, company) {
       country: 'shippingAddress.country',
       amount: 'totalAmount',
       totalWithShipping: 'totalWithShipping',
+      productName: 'items.0.name',
+      itemCount: 'items.length',
       currency: 'currency',
       notes: 'deliveryNotes'
     };
