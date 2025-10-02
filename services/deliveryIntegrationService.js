@@ -234,6 +234,7 @@ export function buildPayloadFromMappings(order, company) {
       city: 'shippingAddress.city',
       country: 'shippingAddress.country',
       amount: 'totalAmount',
+      totalWithShipping: 'totalWithShipping',
       currency: 'currency',
       notes: 'deliveryNotes'
     };
