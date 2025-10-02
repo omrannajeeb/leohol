@@ -39,14 +39,12 @@ const orderSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: ['USD', 'EUR', 'GBP', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'LBP', 'EGP', 'IQD', 'ILS'],
-    default: () => process.env.STORE_CURRENCY || 'USD'
+    default: 'USD'
   },
-  // In single store currency mode, exchangeRate is always 1 (kept for backward compatibility with historical orders/analytics)
   exchangeRate: {
     type: Number,
     required: true,
-    default: 1,
-    min: 0
+    default: 1
   },
   shippingAddress: {
     street: {
@@ -98,7 +96,7 @@ const orderSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['card', 'cod', 'paypal'],
+    enum: ['card', 'cod'],
     required: true
   },
   paymentStatus: {
@@ -106,8 +104,6 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'completed', 'failed'],
     default: 'pending'
   },
-  paymentReference: { type: String },
-  paymentDetails: { type: mongoose.Schema.Types.Mixed },
   status: {
     type: String,
     enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
@@ -144,32 +140,6 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  // Shipping fee (can mirror deliveryFee for backward compatibility)
-  shippingFee: {
-    type: Number,
-    default: 0
-  },
-  // City-level shipping metadata
-  shippingCity: { type: String },
-  shippingZoneId: { type: mongoose.Schema.Types.ObjectId, ref: 'ShippingZone' },
-  shippingRateId: { type: mongoose.Schema.Types.ObjectId, ref: 'ShippingRate' },
-  shippingMethodName: { type: String },
-  shippingCalculation: {
-    type: mongoose.Schema.Types.Mixed, // store raw calculation context (subtotal, weight, zone candidates, etc.)
-    default: null
-  },
-  shippingCostComponents: [{
-    label: String,
-    amount: Number
-  }],
-  // Client-provided shipping fee (for flat fee UI) to preserve original user-facing amount
-  clientShippingFee: {
-    type: Number,
-    default: 0
-  },
-  // Original client-facing shipping currency & amount (for auditing / display)
-  shippingOriginalCurrency: { type: String },
-  shippingOriginalFee: { type: Number, default: 0 },
   deliveryStatusUpdated: {
     type: Date
   },
@@ -190,40 +160,7 @@ const orderSchema = new mongoose.Schema({
     type: String
   }
 }, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
-
-// Virtual: If shippingFee not explicitly set but deliveryFee exists, expose it
-orderSchema.virtual('effectiveShippingFee').get(function() {
-  if (typeof this.shippingFee === 'number' && this.shippingFee > 0) return this.shippingFee;
-  return this.deliveryFee || 0;
-});
-
-// Virtual: Total including shipping (non-destructive; does not mutate stored totalAmount)
-orderSchema.virtual('totalWithShipping').get(function() {
-  const base = this.totalAmount || 0;
-  const ship = (typeof this.shippingFee === 'number' && this.shippingFee > 0)
-    ? this.shippingFee
-    : (this.deliveryFee || 0);
-  return base + ship;
-});
-
-// Keep shippingFee and deliveryFee loosely in sync (one-way: if deliveryFee changes and shippingFee is 0)
-orderSchema.pre('save', function(next) {
-  if (this.isModified('deliveryFee')) {
-    if ((!this.shippingFee || this.shippingFee === 0) && this.deliveryFee) {
-      this.shippingFee = this.deliveryFee;
-    }
-  }
-  // Reverse direction: if shippingFee changed and deliveryFee still empty/zero, mirror it
-  if (this.isModified('shippingFee')) {
-    if ((!this.deliveryFee || this.deliveryFee === 0) && this.shippingFee) {
-      this.deliveryFee = this.shippingFee;
-    }
-  }
-  next();
+  timestamps: true
 });
 
 // Add index for orderNumber
