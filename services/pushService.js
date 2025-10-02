@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 import PushSubscription from '../models/PushSubscription.js';
+import User from '../models/User.js';
 
 export async function sendPushToUser(userId, payload) {
   const subs = await PushSubscription.find({ userId });
@@ -8,6 +9,19 @@ export async function sendPushToUser(userId, payload) {
 
 export async function sendPushToAll(payload) {
   const subs = await PushSubscription.find();
+  return sendToSubs(subs, payload);
+}
+
+// Send push notifications to all admin users only.
+// If no admin subscriptions exist, we do nothing (caller can decide fallback behavior)
+// Payload can be object or pre-stringified.
+export async function sendPushToAdmins(payload) {
+  // Find all admin user ids first to avoid large $in with role filter on subscriptions collection (subscriptions store userId ref)
+  const admins = await User.find({ role: 'admin' }).select('_id').lean();
+  if (!admins.length) return { sent: 0, removed: 0, note: 'no-admin-users' };
+  const adminIds = admins.map(a => a._id);
+  const subs = await PushSubscription.find({ userId: { $in: adminIds } });
+  if (!subs.length) return { sent: 0, removed: 0, note: 'no-admin-subscriptions' };
   return sendToSubs(subs, payload);
 }
 
