@@ -207,59 +207,53 @@ const PORT = process.env.PORT || 5000;
 // Create HTTP server
 const server = createServer(app);
 
-// WebSocket setup
-const wss = new WebSocketServer({ 
-  server,
-  path: '/ws'
-});
+// WebSocket setup (expanded)
+// Accept all upgrade paths so platform/proxy rewrites (e.g. /api/ws) still succeed.
+const wss = new WebSocketServer({ server });
 
-// Store connected clients
+// Track clients (WebSocket) and Server-Sent Events (SSE)
 const clients = new Set();
+const sseClients = new Set(); // each item: { id, res }
 
-wss.on('connection', (ws, request) => {
-  console.log('New WebSocket connection established');
+function initSocket(ws, request) {
+  const pathInfo = request?.url || 'unknown';
+  console.log(`[WS] Connection established path=${pathInfo} total=${clients.size + 1}`);
   clients.add(ws);
-  
-  // Send welcome message
-  ws.send(JSON.stringify({
-    type: 'connection_established',
-    data: { message: 'Connected to real-time updates' },
-    timestamp: new Date().toISOString()
-  }));
+  try {
+    ws.send(JSON.stringify({
+      type: 'connection_established',
+      data: { message: 'Connected to real-time updates', path: pathInfo },
+      timestamp: new Date().toISOString()
+    }));
+  } catch {}
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
-      console.log('Received WebSocket message:', data);
-      
-      // Handle different message types if needed
-      switch (data.type) {
-        case 'ping':
-          ws.send(JSON.stringify({
-            type: 'pong',
-            timestamp: new Date().toISOString()
-          }));
-          break;
-        default:
-          console.log('Unknown message type:', data.type);
+      if (data.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+      } else {
+        console.log('[WS] Unknown message type:', data.type);
       }
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
+    } catch (err) {
+      console.error('[WS] Error parsing message', err?.message || err);
     }
   });
 
-  ws.on('close', () => {
-    console.log('WebSocket connection closed');
+  ws.on('close', (code, reason) => {
     clients.delete(ws);
+    console.log(`[WS] Closed code=${code} reason=${reason?.toString() || ''} remaining=${clients.size}`);
   });
 
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
+  ws.on('error', (err) => {
+    console.error('[WS] Socket error', err?.message || err);
     clients.delete(ws);
   });
-});
+}
 
-// Function to broadcast to all connected clients
+wss.on('connection', (ws, req) => initSocket(ws, req));
+
+// Function to broadcast to all connected clients (WS + SSE)
 export function broadcastToClients(data) {
   const message = JSON.stringify({
     ...data,
@@ -276,11 +270,54 @@ export function broadcastToClients(data) {
       }
     }
   });
+
+  // SSE broadcast (send as event stream line)
+  const ssePayload = `data: ${message}\n\n`;
+  sseClients.forEach(client => {
+    try {
+      client.res.write(ssePayload);
+    } catch (err) {
+      console.error('[SSE] Failed write, removing client', err?.message || err);
+      sseClients.delete(client);
+    }
+  });
 }
 
 // Make broadcaster accessible to routes/controllers without creating import cycles
 // Routes can access it via req.app.get('broadcastToClients')
 app.set('broadcastToClients', broadcastToClients);
+
+// SSE endpoint for settings / real-time updates fallback
+app.get('/api/settings/stream', (req, res) => {
+  // Setup headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders && res.flushHeaders();
+
+  const id = Date.now() + ':' + Math.random().toString(36).slice(2);
+  const clientRef = { id, res };
+  sseClients.add(clientRef);
+  console.log(`[SSE] Client connected id=${id} total=${sseClients.size}`);
+
+  // Heartbeat every 25s (avoid some proxies timing out)
+  const heartbeat = setInterval(() => {
+    try { res.write(`: ping ${Date.now()}\n`); } catch {}
+  }, 25000);
+
+  // Initial hello
+  try {
+    res.write(`event: connection\n`);
+    res.write(`data: ${JSON.stringify({ type: 'sse_connected', id, ts: new Date().toISOString() })}\n\n`);
+  } catch {}
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(clientRef);
+    console.log(`[SSE] Client disconnected id=${id} remaining=${sseClients.size}`);
+  });
+});
 
 // Initialize server
 const startServer = async () => {
