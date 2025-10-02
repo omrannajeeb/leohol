@@ -1,105 +1,62 @@
-import cloudinary from '../services/cloudinaryClient.js';
-import { ensureCloudinaryConfig } from '../services/cloudinaryConfigService.js';
+import cloudinary from './cloudinaryClient.js';
+import Settings from '../models/Settings.js';
 
-// List resources with optional folder, type, and pagination
-export const listResources = async (req, res) => {
+function getEnvCreds() {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || '';
+  const apiKey = process.env.CLOUDINARY_API_KEY || process.env.VITE_CLOUDINARY_API_KEY || '';
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || process.env.VITE_CLOUDINARY_API_SECRET || '';
+  return { cloudName, apiKey, apiSecret };
+}
+
+export async function loadCredsFromDbOrEnv() {
   try {
-    const configured = await ensureCloudinaryConfig();
-    if (!configured) {
-      console.warn('[cloudinary][listResources] Request received but Cloudinary credentials are not configured');
-      return res.status(400).json({
-        message: 'Cloudinary is not configured. Please add credentials in Settings > Integrations > Cloudinary.',
-        code: 'cloudinary_not_configured'
-      });
+    // Prefer the most recently updated Settings doc in case multiple were accidentally created
+    const docs = await Settings.find().sort({ updatedAt: -1 }).limit(2).select('cloudinary updatedAt');
+    const s = docs[0];
+    if (docs.length > 1) {
+      console.warn(`[cloudinaryConfig] Multiple Settings documents detected (${docs.length}). Using the most recently updated one (${s?._id}). Consider cleaning up duplicates to guarantee persistence.`);
     }
-    const { folder, next_cursor, max_results = 30, resource_type = 'image', prefix, tags } = req.query;
-    const options = {
-      type: 'upload',
-      resource_type,
-      max_results: Math.min(Number(max_results) || 30, 100),
+    const db = (s && s.cloudinary) ? s.cloudinary : {};
+    const { cloudName, apiKey, apiSecret } = {
+      cloudName: db.cloudName || '',
+      apiKey: db.apiKey || '',
+      apiSecret: db.apiSecret || ''
     };
-    if (next_cursor) options.next_cursor = next_cursor;
-    // Use prefix to limit to folder if provided
-    if (folder) options.prefix = folder.endsWith('/') ? folder : `${folder}/`;
-    if (prefix) options.prefix = prefix;
-    if (tags) options.tags = tags;
+    if (cloudName && apiKey && apiSecret) return { cloudName, apiKey, apiSecret, source: 'db' };
+  } catch {}
+  return { ...getEnvCreds(), source: 'env' };
+}
 
-    let result;
-    try {
-      result = await cloudinary.api.resources(options);
-    } catch (apiErr) {
-      // Common Cloudinary API failure patterns - attempt to surface clearer messages
-      const rawMsg = apiErr?.error?.message || apiErr?.message || 'unknown_error';
-      console.error('[cloudinary][listResources] Cloudinary API error:', rawMsg, { options });
-      // Auth errors often include phrases like 'Missing required parameter - api_key' or 'Invalid Signature'
-      if (/api_key|signature|authorization|not allowed/i.test(rawMsg)) {
-        return res.status(400).json({
-          message: 'Cloudinary authentication failed. Verify cloud name, API key, and API secret.',
-          code: 'cloudinary_auth_failed',
-          detail: rawMsg
-        });
-      }
-      return res.status(502).json({
-        message: 'Failed to fetch resources from Cloudinary',
-        code: 'cloudinary_api_error',
-        detail: rawMsg
-      });
-    }
-    return res.json(result);
-  } catch (err) {
-    console.error('[cloudinary][listResources] Unexpected server error:', err?.message || err);
-    return res.status(500).json({ message: 'Failed to list resources', error: err.message || 'unknown_error' });
-  }
-};
+export async function ensureCloudinaryConfig() {
+  const { cloudName, apiKey, apiSecret } = await loadCredsFromDbOrEnv();
+  if (!cloudName || !apiKey || !apiSecret) return false;
+  cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+  return true;
+}
 
-// List folders optionally under a parent folder
-export const listFolders = async (req, res) => {
+// Helper used by routes to decide whether to attempt Cloudinary upload.
+// Unlike previous in-route checks that only looked at environment variables,
+// this also considers credentials saved in the Settings collection.
+export async function hasCloudinaryCredentials() {
   try {
-    await ensureCloudinaryConfig();
-    const { next_cursor, max_results = 100, parent_folder } = req.query;
-    const options = { max_results: Math.min(Number(max_results) || 100, 200) };
-    if (next_cursor) options.next_cursor = next_cursor;
-    if (parent_folder) options.folder = parent_folder;
-
-    const result = await cloudinary.api.root_folders(options);
-    // If parent_folder provided, fetch subfolders
-    if (parent_folder) {
-      const sub = await cloudinary.api.sub_folders(parent_folder, options);
-      return res.json(sub);
-    }
-    return res.json(result);
-  } catch (err) {
-    console.error('Cloudinary listFolders error:', err);
-    return res.status(500).json({ message: 'Failed to list folders', error: err.message });
+    const { cloudName, apiKey, apiSecret } = await loadCredsFromDbOrEnv();
+    return !!(cloudName && apiKey && apiSecret);
+  } catch {
+    return false;
   }
-};
+}
 
-// Delete one or many resources by public_ids
-export const deleteResources = async (req, res) => {
-  try {
-    await ensureCloudinaryConfig();
-    const { public_ids = [], resource_type = 'image', invalidate = true } = req.body || {};
-    if (!Array.isArray(public_ids) || public_ids.length === 0) {
-      return res.status(400).json({ message: 'public_ids array is required' });
-    }
-    const result = await cloudinary.api.delete_resources(public_ids, { resource_type, invalidate });
-    return res.json(result);
-  } catch (err) {
-    console.error('Cloudinary deleteResources error:', err);
-    return res.status(500).json({ message: 'Failed to delete resources', error: err.message });
-  }
-};
+// Diagnostics: returns how many Settings docs exist and which one provides Cloudinary creds
+export async function cloudinarySettingsDiagnostics() {
+  const docs = await Settings.find().sort({ updatedAt: -1 }).select('cloudinary updatedAt');
+  const active = docs[0];
+  return {
+    totalSettingsDocs: docs.length,
+    activeSettingsId: active?._id || null,
+    hasCloudinary: !!(active?.cloudinary?.cloudName && active?.cloudinary?.apiKey && active?.cloudinary?.apiSecret),
+    cloudName: active?.cloudinary?.cloudName || null,
+    updatedAt: active?.updatedAt || null
+  };
+}
 
-// Optional: rename/move resource
-export const renameResource = async (req, res) => {
-  try {
-    await ensureCloudinaryConfig();
-    const { from_public_id, to_public_id, resource_type = 'image', overwrite = false } = req.body || {};
-    if (!from_public_id || !to_public_id) return res.status(400).json({ message: 'from_public_id and to_public_id are required' });
-    const result = await cloudinary.uploader.rename(from_public_id, to_public_id, { resource_type, overwrite });
-    return res.json(result);
-  } catch (err) {
-    console.error('Cloudinary renameResource error:', err);
-    return res.status(500).json({ message: 'Failed to rename resource', error: err.message });
-  }
-};
+export default { ensureCloudinaryConfig, loadCredsFromDbOrEnv, hasCloudinaryCredentials, cloudinarySettingsDiagnostics };
