@@ -39,12 +39,14 @@ const orderSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: ['USD', 'EUR', 'GBP', 'AED', 'SAR', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'LBP', 'EGP', 'IQD', 'ILS'],
-    default: 'USD'
+    default: () => process.env.STORE_CURRENCY || 'USD'
   },
+  // In single store currency mode, exchangeRate is always 1 (kept for backward compatibility with historical orders/analytics)
   exchangeRate: {
     type: Number,
     required: true,
-    default: 1
+    default: 1,
+    min: 0
   },
   shippingAddress: {
     street: {
