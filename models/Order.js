@@ -217,6 +217,12 @@ orderSchema.pre('save', function(next) {
       this.shippingFee = this.deliveryFee;
     }
   }
+  // Reverse direction: if shippingFee changed and deliveryFee still empty/zero, mirror it
+  if (this.isModified('shippingFee')) {
+    if ((!this.deliveryFee || this.deliveryFee === 0) && this.shippingFee) {
+      this.deliveryFee = this.shippingFee;
+    }
+  }
   next();
 });
 
