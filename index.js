@@ -334,6 +334,40 @@ app.get('/api/settings/stream', (req, res) => {
   });
 });
 
+// Realtime status endpoint (diagnostics)
+app.get('/api/realtime/status', (req, res) => {
+  try {
+    const mem = process.memoryUsage();
+    res.json({
+      wsClients: clients.size,
+      sseClients: sseClients.size,
+      uptimeSec: Math.round(process.uptime()),
+      version: APP_VERSION,
+      rssMB: +(mem.rss / 1024 / 1024).toFixed(1),
+      heapUsedMB: +(mem.heapUsed / 1024 / 1024).toFixed(1)
+    });
+  } catch (e) {
+    res.status(500).json({ message: 'status_error', error: (e?.message || 'unknown') });
+  }
+});
+
+// Test broadcast route (development aid) - can be disabled behind env guard if needed
+app.post('/api/realtime/test-broadcast', (req, res) => {
+  try {
+    broadcastToClients({
+      type: 'settings_updated',
+      data: {
+        test: true,
+        primaryColor: '#'+Math.random().toString(16).slice(2,8).padEnd(6,'0'),
+        timestamp: Date.now()
+      }
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || 'broadcast_failed' });
+  }
+});
+
 // Initialize server
 const startServer = async () => {
   if (process.env.SKIP_DB === '1') {
