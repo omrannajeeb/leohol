@@ -11,6 +11,8 @@ import Settings from '../models/Settings.js';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { calculateShippingFee as calcShipFee } from '../services/shippingService.js';
+import DeliveryCompany from '../models/DeliveryCompany.js';
+import { sendToCompany, mapStatus, validateRequiredMappings, validateCompanyConfiguration } from '../services/deliveryIntegrationService.js';
 
 // Create order
 export const createOrder = async (req, res) => {
@@ -374,6 +376,55 @@ export const createOrder = async (req, res) => {
       console.warn('Failed to send push for new order', pushErr);
     }
 
+    // Attempt auto-dispatch to delivery company if configuration enables it.
+    let autoDispatchResult = null;
+    try {
+      // Find an active delivery company with autoDispatchOnOrderCreate enabled.
+      const autoCompany = await DeliveryCompany.findOne({ isActive: true, autoDispatchOnOrderCreate: true }).sort('-isDefault');
+      if (autoCompany) {
+        const statuses = Array.isArray(autoCompany.autoDispatchStatuses) && autoCompany.autoDispatchStatuses.length
+          ? autoCompany.autoDispatchStatuses
+          : ['pending'];
+        if (statuses.includes(savedOrder.status)) {
+          // Validate configuration before sending
+          const cfg = validateCompanyConfiguration(autoCompany.toObject());
+          if (cfg.ok) {
+            const mappingCheck = validateRequiredMappings(savedOrder.toObject(), autoCompany.toObject());
+            if (mappingCheck.ok) {
+              const deliveryFee = savedOrder.shippingFee || savedOrder.deliveryFee || 0;
+              const { trackingNumber, providerResponse, providerStatus } = await sendToCompany(savedOrder.toObject(), autoCompany.toObject(), { deliveryFee });
+              savedOrder.deliveryCompany = autoCompany._id;
+              savedOrder.deliveryStatus = mapStatus(autoCompany, providerStatus || 'assigned');
+              savedOrder.deliveryTrackingNumber = trackingNumber;
+              savedOrder.trackingNumber = trackingNumber; // legacy
+              savedOrder.deliveryAssignedAt = new Date();
+              savedOrder.deliveryFee = deliveryFee || savedOrder.deliveryFee || 0;
+              savedOrder.deliveryResponse = providerResponse;
+              await savedOrder.save();
+              autoDispatchResult = {
+                success: true,
+                companyId: String(autoCompany._id),
+                trackingNumber,
+                status: savedOrder.deliveryStatus,
+                providerStatus: providerStatus || 'assigned'
+              };
+            } else {
+              autoDispatchResult = { success: false, reason: 'MISSING_MAPPINGS', missing: mappingCheck.missing };
+            }
+          } else {
+            autoDispatchResult = { success: false, reason: 'INVALID_CONFIGURATION', issues: cfg.issues };
+          }
+        } else {
+          autoDispatchResult = { success: false, reason: 'STATUS_NOT_ELIGIBLE', orderStatus: savedOrder.status };
+        }
+      } else {
+        autoDispatchResult = { success: false, reason: 'NO_AUTO_COMPANY' };
+      }
+    } catch (autoErr) {
+      console.warn('Auto-dispatch failed (non-fatal):', autoErr);
+      autoDispatchResult = { success: false, reason: 'AUTO_DISPATCH_ERROR', error: autoErr?.message };
+    }
+
     res.status(201).json({
       message: 'Order created successfully',
       order: {
@@ -384,6 +435,9 @@ export const createOrder = async (req, res) => {
         status: savedOrder.status,
         deliveryFee: savedOrder.deliveryFee || 0,
         shippingFee: savedOrder.shippingFee || savedOrder.deliveryFee || 0,
+        deliveryStatus: savedOrder.deliveryStatus || null,
+        deliveryTrackingNumber: savedOrder.deliveryTrackingNumber || savedOrder.trackingNumber || null,
+        autoDispatch: autoDispatchResult,
         totalWithShipping: (() => {
           const base = savedOrder.totalAmount || 0;
           const ship = savedOrder.shippingFee || savedOrder.deliveryFee || 0;
