@@ -209,7 +209,22 @@ const server = createServer(app);
 
 // WebSocket setup (expanded)
 // Accept all upgrade paths so platform/proxy rewrites (e.g. /api/ws) still succeed.
-const wss = new WebSocketServer({ server });
+// Disable perMessageDeflate to reduce chances of proxy interference closing connection early.
+const wss = new WebSocketServer({ server, perMessageDeflate: false });
+
+// Extra upgrade diagnostics
+server.on('upgrade', (req, socket, head) => {
+  try {
+    console.log('[WS][upgrade] incoming', {
+      url: req.url,
+      host: req.headers.host,
+      origin: req.headers.origin,
+      ua: req.headers['user-agent'],
+      secVersion: req.headers['sec-websocket-version'],
+      secProtocol: req.headers['sec-websocket-protocol']
+    });
+  } catch {}
+});
 
 // Track clients (WebSocket) and Server-Sent Events (SSE)
 const clients = new Set();
