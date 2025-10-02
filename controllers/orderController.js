@@ -7,6 +7,7 @@ import { inventoryService } from '../services/inventoryService.js';
 import { SUPPORTED_CURRENCIES } from '../utils/currency.js';
 import { realTimeEventService } from '../services/realTimeEventService.js';
 import { sendPushToAll, sendPushToAdmins } from '../services/pushService.js';
+import { whatsappFallbackForNewOrder } from '../services/whatsappFallbackService.js';
 import Settings from '../models/Settings.js';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -363,21 +364,35 @@ export const createOrder = async (req, res) => {
     realTimeEventService.emitNewOrder(savedOrder);
 
     // Fire a web push notification targeted to admins (fallback broadcast if none subscribed)
+    let pushSent = 0;
     try {
+      const contactEnabled = String(process.env.WHATSAPP_CONTACT_IN_PUSH || 'false').toLowerCase() === 'true';
+      const primaryContact = process.env.WHATSAPP_PRIMARY_CONTACT_NUMBER || '';
+      const contactLine = (contactEnabled && primaryContact) ? ` • WhatsApp: ${primaryContact}` : '';
       const payload = {
         title: 'New Order Received',
-        body: `Order ${savedOrder.orderNumber} • ${savedOrder.items.length} item(s) • ${savedOrder.totalAmount} ${savedOrder.currency}`,
+        body: `Order ${savedOrder.orderNumber} • ${savedOrder.items.length} item(s) • ${savedOrder.totalAmount} ${savedOrder.currency}${contactLine}`,
         url: '/admin/orders',
         tag: 'new-order',
         requireInteraction: true
       };
       const adminResult = await sendPushToAdmins(payload);
-      if ((adminResult.sent || 0) === 0) {
-        // Graceful fallback so at least someone monitoring gets it (legacy behavior)
-        await sendPushToAll(payload);
+      pushSent = adminResult.sent || 0;
+      if (pushSent === 0) {
+        const allResult = await sendPushToAll(payload);
+        pushSent = allResult.sent || 0;
       }
     } catch (pushErr) {
       console.warn('Failed to send push for new order', pushErr);
+    }
+
+    // If no push delivered, generate WhatsApp manual notification links (internal logging only)
+    if (pushSent === 0) {
+      try {
+        await whatsappFallbackForNewOrder(savedOrder);
+      } catch (waErr) {
+        console.warn('WhatsApp fallback generation failed (non-fatal)', waErr);
+      }
     }
 
     // Attempt auto-dispatch to delivery company if configuration enables it.
