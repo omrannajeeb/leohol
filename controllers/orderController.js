@@ -6,9 +6,11 @@ import Inventory from '../models/Inventory.js';
 import { inventoryService } from '../services/inventoryService.js';
 import { SUPPORTED_CURRENCIES } from '../utils/currency.js';
 import { realTimeEventService } from '../services/realTimeEventService.js';
+import { sendPushToAll } from '../services/pushService.js';
 import Settings from '../models/Settings.js';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { calculateShippingFee as calcShipFee } from '../services/shippingService.js';
 
 // Create order
 export const createOrder = async (req, res) => {
@@ -17,7 +19,7 @@ export const createOrder = async (req, res) => {
 
   try {
     console.log('createOrder called with body:', JSON.stringify(req.body, null, 2));
-    const { items, shippingAddress, paymentMethod, customerInfo } = req.body;
+  const { items, shippingAddress, paymentMethod, customerInfo } = req.body;
 
     // If the request includes a Bearer token, attempt to associate the order with the authenticated user
     try {
@@ -36,20 +38,16 @@ export const createOrder = async (req, res) => {
       console.warn('Optional auth token invalid for createOrder; proceeding as guest if needed.');
     }
 
-    // Determine order currency: prefer request body, else store settings, else USD
+    // Single store currency mode: trust incoming currency if matches store setting; else force store currency
     let currency = req.body?.currency;
-    if (!currency || !SUPPORTED_CURRENCIES[currency]) {
-      try {
-        const storeSettings = await Settings.findOne();
-        const defaultCur = storeSettings?.currency;
-        if (defaultCur && SUPPORTED_CURRENCIES[defaultCur]) {
-          currency = defaultCur;
-        } else {
-          currency = 'USD';
-        }
-      } catch {
-        currency = 'USD';
+    try {
+      const storeSettings = await Settings.findOne();
+      const storeCurrency = storeSettings?.currency || process.env.STORE_CURRENCY || 'USD';
+      if (!currency || currency !== storeCurrency) {
+        currency = storeCurrency;
       }
+    } catch {
+      currency = process.env.STORE_CURRENCY || currency || 'USD';
     }
 
     // Validate required fields
@@ -65,9 +63,9 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: 'Complete shipping address is required' });
     }
 
-    // Validate currency
+    // In single-currency mode we only validate equality with store currency; SUPPORTED_CURRENCIES retained for backward compatibility.
     if (!SUPPORTED_CURRENCIES[currency]) {
-      return res.status(400).json({ message: 'Invalid currency' });
+      return res.status(400).json({ message: 'Store currency not recognized in configuration' });
     }
 
     // Attempt to start transaction; if not supported (e.g., standalone Mongo), continue without it
@@ -184,7 +182,117 @@ export const createOrder = async (req, res) => {
       await Recipient.findOneAndUpdate(recipientQuery, recipientUpdate, { upsert: true, new: true });
     }
 
-    // Create order with auto-generated order number
+    // --- Shipping Fee Resolution ---
+    // Priority:
+    // 1. If client explicitly sent a positive shippingFee (flat fee UI) trust it (configurable via ALLOW_CLIENT_SHIPPING_FEE=true)
+    // 2. Else attempt dynamic calculation via shipping service
+    // 3. If calc fails OR returns 0 while client provided a positive hint in totalWithShipping, derive difference
+    // 4. Final fallback: DEFAULT_SHIPPING_FEE env or 50
+    let shippingFee = 0;
+    let shippingMeta = {
+      city: shippingAddress?.city,
+      rateId: null,
+      zoneId: null,
+      methodName: null,
+      costComponents: []
+    };
+    const allowClientProvided = String(process.env.ALLOW_CLIENT_SHIPPING_FEE || 'true').toLowerCase() !== 'false';
+  const rawShippingFee = req.body?.shippingFee;
+  const rawClientShippingFee = req.body?.clientShippingFee;
+  const rawDeliveryFee = req.body?.deliveryFee;
+  const clientShippingFee = Number(rawShippingFee);
+  const clientAltFee = Number(rawClientShippingFee);
+  const clientDeliveryFee = Number(rawDeliveryFee);
+  const clientTotalWithShipping = Number(req.body?.totalWithShipping);
+    const clientProvidedValid = allowClientProvided && isFinite(clientShippingFee) && clientShippingFee > 0;
+
+    if (clientProvidedValid) {
+      shippingFee = clientShippingFee;
+    } else if (allowClientProvided && isFinite(clientAltFee) && clientAltFee > 0) {
+      // Fallback: some clients send clientShippingFee only
+      shippingFee = clientAltFee;
+    } else if (allowClientProvided && isFinite(clientDeliveryFee) && clientDeliveryFee > 0) {
+      // Legacy / alternate field
+      shippingFee = clientDeliveryFee;
+    } else {
+      try {
+        const addressCountry = shippingAddress.country;
+        const addressCity = shippingAddress.city;
+        shippingFee = await calcShipFee({ subtotal: totalAmount, weight: 0, country: addressCountry, region: undefined, city: addressCity });
+        if (!isFinite(shippingFee) || shippingFee < 0) shippingFee = 0;
+      } catch (e) {
+        console.warn('Shipping fee calculation failed, will use fallback logic:', e?.message || e);
+        shippingFee = 0; // trigger fallback below
+      }
+    }
+
+    console.log('[ShippingResolution]', {
+      rawShippingFee,
+      rawClientShippingFee,
+      rawDeliveryFee,
+      clientShippingFeeParsed: clientShippingFee,
+      clientAltFeeParsed: clientAltFee,
+      clientDeliveryFeeParsed: clientDeliveryFee,
+      clientTotalWithShipping,
+      chosenShippingFee: shippingFee,
+      allowClientProvided
+    });
+
+    // Hard override safeguard: if all logic above yielded 0 but request clearly sent a positive numeric value, adopt it now.
+    if (shippingFee === 0) {
+      const rawCandidates = [rawShippingFee, rawClientShippingFee, rawDeliveryFee]
+        .map(v => (typeof v === 'string' ? v.trim() : v))
+        .map(v => Number(v))
+        .filter(v => isFinite(v) && v > 0);
+      if (rawCandidates.length) {
+        const forced = Math.max(...rawCandidates);
+        shippingFee = forced;
+        console.log('[ShippingResolution][HardOverrideApplied]', { forced, rawCandidates });
+      }
+    }
+
+    if (shippingFee === 0) {
+      // Attempt to infer from client totalWithShipping if provided
+      if (clientTotalWithShipping && clientTotalWithShipping > totalAmount) {
+        const inferred = clientTotalWithShipping - totalAmount;
+        if (isFinite(inferred) && inferred > 0) shippingFee = inferred;
+      }
+    }
+
+    if (shippingFee === 0) {
+      // Final fallback
+      const fallback = Number(process.env.DEFAULT_SHIPPING_FEE || 50);
+      if (isFinite(fallback) && fallback > 0) shippingFee = fallback;
+    }
+
+    // Last-chance rescue: if still 0 but any raw positive values were provided, take the maximum raw positive
+    if (shippingFee === 0) {
+      const candidates = [clientShippingFee, clientAltFee, clientDeliveryFee].filter(v => isFinite(v) && v > 0);
+      if (candidates.length) {
+        shippingFee = Math.max(...candidates);
+        console.log('[ShippingResolution][RescueApplied]', { rescueChosen: shippingFee, candidates });
+      }
+    }
+
+  // Final assertion: log before create
+  console.log('[ShippingResolution][Final]', { shippingFee, deliveryFeeMirror: shippingFee });
+  if (shippingFee === 0) {
+    const rawPositives = [rawShippingFee, rawClientShippingFee, rawDeliveryFee].map(v => Number(v)).filter(v => isFinite(v) && v > 0);
+    if (rawPositives.length) {
+      console.warn('[ShippingResolution][Anomaly] Raw positive fee(s) provided but computed/final shippingFee resolved to 0. Raw values:', {
+        rawShippingFee,
+        rawClientShippingFee,
+        rawDeliveryFee,
+        parsed: rawPositives
+      });
+    }
+  }
+  // Absolute final guard: if request body had a positive shippingFee value, force it.
+  if (shippingFee === 0 && isFinite(Number(rawShippingFee)) && Number(rawShippingFee) > 0) {
+    console.warn('[ShippingResolution][ForceFromRawBody] Forcing shippingFee from raw body value', { rawShippingFee });
+    shippingFee = Number(rawShippingFee);
+  }
+  // Create order with auto-generated order number (include shipping & delivery fee fields)
     const order = new Order({
       user: req.user?._id || undefined,
       items: orderItems,
@@ -202,8 +310,22 @@ export const createOrder = async (req, res) => {
       },
       status: 'pending',
       orderNumber: `ORD${Date.now()}`,
-  // For online payments (card/paypal), mark as pending until provider capture completes
-  paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending'
+      // Persist only one authoritative shipping fee and mirror it to deliveryFee for legacy consumers.
+      shippingFee,
+      deliveryFee: shippingFee,
+      shippingCity: shippingMeta.city,
+      shippingZoneId: shippingMeta.zoneId,
+      shippingRateId: shippingMeta.rateId,
+      shippingMethodName: shippingMeta.methodName,
+      shippingCostComponents: shippingMeta.costComponents,
+      shippingCalculation: {
+        subtotal: totalAmount,
+        country: shippingAddress.country,
+        city: shippingAddress.city,
+        weight: 0
+      },
+      // For online payments (card/paypal), mark as pending until provider capture completes
+      paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending'
     });
 
     let savedOrder;
@@ -238,6 +360,20 @@ export const createOrder = async (req, res) => {
     // Emit real-time event for new order
     realTimeEventService.emitNewOrder(savedOrder);
 
+    // Fire a web push notification so admins (or any subscribed user) get alerted even if browser closed.
+    // TODO: If role-based targeting is needed, replace sendPushToAll with filtering by admin user ids.
+    try {
+      await sendPushToAll({
+        title: 'New Order Received',
+        body: `Order ${savedOrder.orderNumber} • ${savedOrder.items.length} item(s) • ${savedOrder.totalAmount} ${savedOrder.currency}`,
+        url: '/admin/orders',
+        tag: 'new-order',
+        requireInteraction: true
+      });
+    } catch (pushErr) {
+      console.warn('Failed to send push for new order', pushErr);
+    }
+
     res.status(201).json({
       message: 'Order created successfully',
       order: {
@@ -245,7 +381,30 @@ export const createOrder = async (req, res) => {
         orderNumber: savedOrder.orderNumber,
         totalAmount: savedOrder.totalAmount,
         currency: savedOrder.currency,
-        status: savedOrder.status
+        status: savedOrder.status,
+        deliveryFee: savedOrder.deliveryFee || 0,
+        shippingFee: savedOrder.shippingFee || savedOrder.deliveryFee || 0,
+        totalWithShipping: (() => {
+          const base = savedOrder.totalAmount || 0;
+          const ship = savedOrder.shippingFee || savedOrder.deliveryFee || 0;
+          // Reuse same heuristic as model virtual (without recomputing items to avoid duplication)
+          // If items subtotal can be derived and base already includes ship, return base.
+          let reconstructedSubtotal = 0;
+          try {
+            if (Array.isArray(savedOrder.items)) {
+              for (const it of savedOrder.items) {
+                if (it && typeof it.price === 'number' && typeof it.quantity === 'number') {
+                  reconstructedSubtotal += (it.price * it.quantity);
+                }
+              }
+            }
+          } catch {}
+          if (reconstructedSubtotal > 0) {
+            const diff = Math.abs((base - reconstructedSubtotal) - ship);
+            if (diff < 0.0001) return base;
+          }
+          return base + ship;
+        })()
       }
     });
   } catch (error) {
@@ -281,10 +440,20 @@ export const getUserOrders = async (req, res) => {
       ? { $or: [ { user: userId }, emailFilter ] }
       : { user: userId };
 
-    const orders = await Order.find(query)
+    const ordersDocs = await Order.find(query)
       .populate('items.product')
       .populate('deliveryCompany')
       .sort('-createdAt');
+    // Ensure virtuals present and add explicit totalWithShipping in case consumer relies on it
+    const orders = ordersDocs.map(o => {
+      const obj = o.toObject({ virtuals: true });
+      return {
+        ...obj,
+        // effectiveShippingFee virtual already resolves shipping vs delivery
+        effectiveShippingFee: obj.effectiveShippingFee ?? (obj.shippingFee || obj.deliveryFee || 0),
+        totalWithShipping: obj.totalWithShipping ?? ((obj.totalAmount || 0) + (obj.shippingFee || obj.deliveryFee || 0))
+      };
+    });
     res.json(orders);
   } catch (error) {
     console.error('Error fetching user orders:', error);
@@ -295,10 +464,18 @@ export const getUserOrders = async (req, res) => {
 // Get all orders (admin)
 export const getAllOrders = async (req, res) => {
   try {
-    const orders = await Order.find()
+    const ordersDocs = await Order.find()
       .populate('items.product')
       .populate('deliveryCompany')
       .sort('-createdAt');
+    const orders = ordersDocs.map(o => {
+      const obj = o.toObject({ virtuals: true });
+      return {
+        ...obj,
+        effectiveShippingFee: obj.effectiveShippingFee ?? (obj.shippingFee || obj.deliveryFee || 0),
+        totalWithShipping: obj.totalWithShipping ?? ((obj.totalAmount || 0) + (obj.shippingFee || obj.deliveryFee || 0))
+      };
+    });
     res.json(orders);
   } catch (error) {
     console.error('Error fetching all orders:', error);
@@ -355,4 +532,37 @@ export const requestDeliveryAssignment = async (req, res) => {
   return res.status(400).json({ 
     message: 'Delivery company assignment is no longer available' 
   });
+};
+
+// Recalculate shipping for an existing order (admin)
+export const recalculateShipping = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const city = order.shippingAddress?.city;
+    const country = order.shippingAddress?.country;
+    const subtotal = order.totalAmount || 0;
+    let newFee = 0;
+    try {
+      newFee = await calcShipFee({ subtotal, weight: 0, country, region: undefined, city });
+    } catch (e) {
+      return res.status(400).json({ message: 'Failed to calculate shipping', error: e?.message });
+    }
+
+    order.shippingFee = newFee;
+    order.deliveryFee = newFee;
+    order.shippingCity = city;
+    order.shippingCalculation = { subtotal, country, city, weight: 0, recalculatedAt: new Date() };
+    await order.save();
+
+    res.json({
+      message: 'Shipping recalculated',
+      shippingFee: newFee,
+      orderId: order._id
+    });
+  } catch (error) {
+    console.error('Error recalculating shipping:', error);
+    res.status(500).json({ message: 'Failed to recalculate shipping' });
+  }
 };
