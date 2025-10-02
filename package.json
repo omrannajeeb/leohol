@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "server": "node index.js",
     "start": "node server/index.js",
+    "deploy:manual": "npm run build && netlify deploy --prod --dir=dist",
     "gen:vapid": "node server/scripts/genVapid.js",
     "migrate:brands:dry": "node server/scripts/migrateBrandImagesToCloudinary.js",
     "migrate:brands:apply": "node server/scripts/migrateBrandImagesToCloudinary.js --apply",
@@ -61,7 +62,7 @@
     "react-fast-marquee": "^1.6.4",
     "react-hot-toast": "^2.6.0",
     "react-i18next": "^14.0.5",
-  "react-router-dom": "^6.28.0",
+    "react-router-dom": "^6.28.0",
     "recharts": "^2.15.4",
     "tailwind-merge": "^3.3.1",
     "web-push": "^3.6.7",
@@ -88,5 +89,12 @@
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
     "vite": "^5.1.4"
-  }
+  },
+  "browserslist": [
+    ">0.3%",
+    "last 3 versions",
+    "Firefox ESR",
+    "not dead",
+    "not op_mini all"
+  ]
 }
