@@ -199,6 +199,25 @@ orderSchema.virtual('totalWithShipping').get(function() {
   const ship = (typeof this.shippingFee === 'number' && this.shippingFee > 0)
     ? this.shippingFee
     : (this.deliveryFee || 0);
+  // Heuristic: if base already appears to include ship (i.e., a single item subtotal + ship equals base),
+  // avoid double-adding. We attempt to reconstruct items subtotal.
+  let reconstructedSubtotal = 0;
+  try {
+    if (Array.isArray(this.items)) {
+      for (const it of this.items) {
+        if (it && typeof it.price === 'number' && typeof it.quantity === 'number') {
+          reconstructedSubtotal += (it.price * it.quantity);
+        }
+      }
+    }
+  } catch {}
+  // If reconstructed subtotal is positive and base - reconstructedSubtotal === ship (within 0.0001), assume already included.
+  if (reconstructedSubtotal > 0) {
+    const diff = Math.abs((base - reconstructedSubtotal) - ship);
+    if (diff < 0.0001) {
+      return base; // base already includes shipping
+    }
+  }
   return base + ship;
 });
 
