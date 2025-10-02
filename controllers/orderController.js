@@ -6,7 +6,7 @@ import Inventory from '../models/Inventory.js';
 import { inventoryService } from '../services/inventoryService.js';
 import { SUPPORTED_CURRENCIES } from '../utils/currency.js';
 import { realTimeEventService } from '../services/realTimeEventService.js';
-import { sendPushToAll } from '../services/pushService.js';
+import { sendPushToAll, sendPushToAdmins } from '../services/pushService.js';
 import Settings from '../models/Settings.js';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -362,16 +362,20 @@ export const createOrder = async (req, res) => {
     // Emit real-time event for new order
     realTimeEventService.emitNewOrder(savedOrder);
 
-    // Fire a web push notification so admins (or any subscribed user) get alerted even if browser closed.
-    // TODO: If role-based targeting is needed, replace sendPushToAll with filtering by admin user ids.
+    // Fire a web push notification targeted to admins (fallback broadcast if none subscribed)
     try {
-      await sendPushToAll({
+      const payload = {
         title: 'New Order Received',
         body: `Order ${savedOrder.orderNumber} • ${savedOrder.items.length} item(s) • ${savedOrder.totalAmount} ${savedOrder.currency}`,
         url: '/admin/orders',
         tag: 'new-order',
         requireInteraction: true
-      });
+      };
+      const adminResult = await sendPushToAdmins(payload);
+      if ((adminResult.sent || 0) === 0) {
+        // Graceful fallback so at least someone monitoring gets it (legacy behavior)
+        await sendPushToAll(payload);
+      }
     } catch (pushErr) {
       console.warn('Failed to send push for new order', pushErr);
     }
