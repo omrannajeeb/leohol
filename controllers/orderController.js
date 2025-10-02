@@ -6,14 +6,51 @@ import Inventory from '../models/Inventory.js';
 import { inventoryService } from '../services/inventoryService.js';
 import { SUPPORTED_CURRENCIES } from '../utils/currency.js';
 import { realTimeEventService } from '../services/realTimeEventService.js';
+import Settings from '../models/Settings.js';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
 
 // Create order
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
+  let useTransaction = false;
 
   try {
     console.log('createOrder called with body:', JSON.stringify(req.body, null, 2));
-    const { items, shippingAddress, paymentMethod, customerInfo, currency = 'USD' } = req.body;
+    const { items, shippingAddress, paymentMethod, customerInfo } = req.body;
+
+    // If the request includes a Bearer token, attempt to associate the order with the authenticated user
+    try {
+      const authHeader = req.header('Authorization');
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (user) {
+          // Attach to request for downstream usage
+          req.user = user;
+        }
+      }
+    } catch (e) {
+      // Silently ignore token errors to allow guest checkout
+      console.warn('Optional auth token invalid for createOrder; proceeding as guest if needed.');
+    }
+
+    // Determine order currency: prefer request body, else store settings, else USD
+    let currency = req.body?.currency;
+    if (!currency || !SUPPORTED_CURRENCIES[currency]) {
+      try {
+        const storeSettings = await Settings.findOne();
+        const defaultCur = storeSettings?.currency;
+        if (defaultCur && SUPPORTED_CURRENCIES[defaultCur]) {
+          currency = defaultCur;
+        } else {
+          currency = 'USD';
+        }
+      } catch {
+        currency = 'USD';
+      }
+    }
 
     // Validate required fields
     if (!items?.length) {
@@ -33,73 +70,95 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: 'Invalid currency' });
     }
 
-    // Start transaction
-    await session.startTransaction();
+    // Attempt to start transaction; if not supported (e.g., standalone Mongo), continue without it
+    try {
+      await session.startTransaction();
+      useTransaction = true;
+    } catch (txnErr) {
+      console.warn('MongoDB transactions not supported in current environment; proceeding without transaction. Reason:', txnErr?.message || txnErr);
+    }
 
     // Calculate total and validate stock
+    // We now treat catalog product.price as already expressed in the chosen store currency.
+    // Previous implementation multiplied by an exchangeRate (assuming a USD base) which caused inflated totals
+    // when catalog prices were already in the display currency. We set exchangeRate=1 for backward compatibility.
     let totalAmount = 0;
     const orderItems = [];
-    const exchangeRate = SUPPORTED_CURRENCIES[currency].exchangeRate;
+    const exchangeRate = 1; // No runtime FX conversion; prices stored as-is
     const stockUpdates = []; // Track stock updates for rollback
 
     for (const item of items) {
-      const product = await Product.findById(item.product).session(session);
+      const baseProductQuery = Product.findById(item.product);
+      const product = useTransaction ? await baseProductQuery.session(session) : await baseProductQuery;
 
       if (!product) {
-        await session.abortTransaction();
+        if (session.inTransaction()) await session.abortTransaction();
         return res.status(404).json({ message: `Product not found: ${item.product}` });
       }
 
-      let sizeName = item.size;
-      let sizeStockOk = true;
-      let sizeIndex = -1;
-
-      // If size is specified, check and decrement size stock
-      if (sizeName) {
-        sizeIndex = product.sizes.findIndex(s => s.name === sizeName);
-        if (sizeIndex === -1) {
-          await session.abortTransaction();
-          return res.status(400).json({ message: `Size '${sizeName}' not found for product ${product.name}` });
-        }
-        if (product.sizes[sizeIndex].stock < item.quantity) {
-          await session.abortTransaction();
-          return res.status(400).json({ message: `Insufficient stock for ${product.name} (size: ${sizeName}). Available: ${product.sizes[sizeIndex].stock}, Requested: ${item.quantity}` });
-        }
-        // Decrement size stock
-        product.sizes[sizeIndex].stock -= item.quantity;
-      } else {
-        // No size specified, check main stock
-        if (product.stock < item.quantity) {
-          await session.abortTransaction();
-          return res.status(400).json({ message: `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}` });
-        }
+      const qty = Number(item.quantity) || 0;
+      if (qty <= 0) {
+        if (session.inTransaction()) await session.abortTransaction();
+        return res.status(400).json({ message: `Invalid quantity for product ${product.name}` });
       }
 
-      // Convert price to order currency
-      const priceInOrderCurrency = product.price * exchangeRate;
-      totalAmount += priceInOrderCurrency * item.quantity;
+      const sizeName = item.size;
+      const hasSizes = Array.isArray(product.sizes) && product.sizes.length > 0;
+
+      if (sizeName && hasSizes) {
+        const sizeIndex = product.sizes.findIndex((s) => s.name === sizeName);
+        if (sizeIndex === -1) {
+          if (session.inTransaction()) await session.abortTransaction();
+          return res.status(400).json({ message: `Size '${sizeName}' not found for product ${product.name}` });
+        }
+        const available = Number(product.sizes[sizeIndex].stock) || 0;
+        if (available < qty) {
+          if (session.inTransaction()) await session.abortTransaction();
+          return res.status(400).json({ message: `Insufficient stock for ${product.name} (size: ${sizeName}). Available: ${available}, Requested: ${qty}` });
+        }
+        // Decrement size stock
+        product.sizes[sizeIndex].stock = available - qty;
+      } else {
+        // No size specified, check main stock
+        const mainStock = Number(product.stock) || 0;
+        if (mainStock < qty) {
+          if (session.inTransaction()) await session.abortTransaction();
+          return res.status(400).json({ message: `Insufficient stock for ${product.name}. Available: ${mainStock}, Requested: ${qty}` });
+        }
+        // Decrement main stock
+        product.stock = mainStock - qty;
+      }
+
+      // Use catalog price directly (already in store currency)
+      const catalogPrice = Number(product.price);
+      if (!isFinite(catalogPrice)) {
+        if (session.inTransaction()) await session.abortTransaction();
+        return res.status(400).json({ message: `Product ${product.name} has invalid price` });
+      }
+      totalAmount += catalogPrice * qty;
 
       orderItems.push({
         product: product._id,
-        quantity: item.quantity,
-        price: priceInOrderCurrency,
+        quantity: qty,
+        price: catalogPrice, // store unmodified
         name: product.name,
-        image: product.images[0],
-        size: sizeName || undefined
+        image: Array.isArray(product.images) && product.images.length ? product.images[0] : undefined,
+        size: hasSizes ? (sizeName || undefined) : undefined
       });
 
       // Track stock update for this product
       stockUpdates.push({
         productId: product._id,
-        originalStock: product.stock,
-        newStock: product.stock - item.quantity
+        originalStock: Number(product.stock) || 0,
+        newStock: Number(product.stock) || 0 // This value is informational; actual inventory handled elsewhere
       });
 
-      // Update product stock within transaction (total stock is recalculated by pre-save hook)
-      if (!sizeName) {
-        product.stock -= item.quantity;
+      // Persist product stock changes
+      if (useTransaction) {
+        await product.save({ session });
+      } else {
+        await product.save();
       }
-      await product.save({ session });
     }
 
     // Save or update recipient in Recipient collection
@@ -119,10 +178,15 @@ export const createOrder = async (req, res) => {
         country: shippingAddress.country
       }
     };
-    await Recipient.findOneAndUpdate(recipientQuery, recipientUpdate, { upsert: true, new: true, session });
+    if (useTransaction) {
+      await Recipient.findOneAndUpdate(recipientQuery, recipientUpdate, { upsert: true, new: true, session });
+    } else {
+      await Recipient.findOneAndUpdate(recipientQuery, recipientUpdate, { upsert: true, new: true });
+    }
 
     // Create order with auto-generated order number
     const order = new Order({
+      user: req.user?._id || undefined,
       items: orderItems,
       totalAmount,
       currency,
@@ -138,25 +202,38 @@ export const createOrder = async (req, res) => {
       },
       status: 'pending',
       orderNumber: `ORD${Date.now()}`,
-      paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed'
+  // For online payments (card/paypal), mark as pending until provider capture completes
+  paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending'
     });
 
     let savedOrder;
     try {
-      savedOrder = await order.save({ session });
+      if (useTransaction) {
+        savedOrder = await order.save({ session });
+      } else {
+        savedOrder = await order.save();
+      }
     } catch (err) {
       // Handle duplicate orderNumber edge case: regenerate and retry once
       if (err && err.code === 11000 && err.keyPattern && err.keyPattern.orderNumber) {
         order.orderNumber = `ORD${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        savedOrder = await order.save({ session });
+        if (useTransaction) {
+          savedOrder = await order.save({ session });
+        } else {
+          savedOrder = await order.save();
+        }
       } else {
-        await session.abortTransaction();
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
         throw err;
       }
     }
 
     // Commit the transaction
-    await session.commitTransaction();
+    if (session.inTransaction()) {
+      await session.commitTransaction();
+    }
 
     // Emit real-time event for new order
     realTimeEventService.emitNewOrder(savedOrder);
@@ -192,8 +269,21 @@ export const createOrder = async (req, res) => {
 // Get user orders
 export const getUserOrders = async (req, res) => {
   try {
-    const orders = await Order.find()
+    const userId = req.user?._id;
+    const userEmail = (req.user?.email || '').toLowerCase();
+
+    // Filter orders to those created by this user or (legacy) guest orders matching their email
+    const emailFilter = userEmail
+      ? { 'customerInfo.email': new RegExp(`^${userEmail}$`, 'i') }
+      : null;
+
+    const query = emailFilter
+      ? { $or: [ { user: userId }, emailFilter ] }
+      : { user: userId };
+
+    const orders = await Order.find(query)
       .populate('items.product')
+      .populate('deliveryCompany')
       .sort('-createdAt');
     res.json(orders);
   } catch (error) {
@@ -207,6 +297,7 @@ export const getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
       .populate('items.product')
+      .populate('deliveryCompany')
       .sort('-createdAt');
     res.json(orders);
   } catch (error) {
