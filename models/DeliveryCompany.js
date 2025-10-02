@@ -47,6 +47,12 @@ const deliveryCompanySchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   // Mark a default company to use when no explicit selection is provided
   isDefault: { type: Boolean, default: false },
+  // Auto-dispatch configuration: if enabled, newly created orders whose status is in autoDispatchStatuses
+  // will automatically be sent to this delivery company during order creation (server-side) without
+  // requiring a manual admin action from the Delivery Management Hub UI.
+  autoDispatchOnOrderCreate: { type: Boolean, default: false },
+  // List of order.status values that should trigger auto dispatch when above flag is true.
+  autoDispatchStatuses: { type: [String], default: ['pending'] },
   // Common UI-driven fields
   apiUrl: { type: String },
   apiFormat: { type: String, enum: ['rest', 'jsonrpc', 'soap', 'graphql'], default: 'rest' },
