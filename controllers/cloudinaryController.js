@@ -4,7 +4,14 @@ import { ensureCloudinaryConfig } from '../services/cloudinaryConfigService.js';
 // List resources with optional folder, type, and pagination
 export const listResources = async (req, res) => {
   try {
-    await ensureCloudinaryConfig();
+    const configured = await ensureCloudinaryConfig();
+    if (!configured) {
+      console.warn('[cloudinary][listResources] Request received but Cloudinary credentials are not configured');
+      return res.status(400).json({
+        message: 'Cloudinary is not configured. Please add credentials in Settings > Integrations > Cloudinary.',
+        code: 'cloudinary_not_configured'
+      });
+    }
     const { folder, next_cursor, max_results = 30, resource_type = 'image', prefix, tags } = req.query;
     const options = {
       type: 'upload',
@@ -17,11 +24,31 @@ export const listResources = async (req, res) => {
     if (prefix) options.prefix = prefix;
     if (tags) options.tags = tags;
 
-    const result = await cloudinary.api.resources(options);
+    let result;
+    try {
+      result = await cloudinary.api.resources(options);
+    } catch (apiErr) {
+      // Common Cloudinary API failure patterns - attempt to surface clearer messages
+      const rawMsg = apiErr?.error?.message || apiErr?.message || 'unknown_error';
+      console.error('[cloudinary][listResources] Cloudinary API error:', rawMsg, { options });
+      // Auth errors often include phrases like 'Missing required parameter - api_key' or 'Invalid Signature'
+      if (/api_key|signature|authorization|not allowed/i.test(rawMsg)) {
+        return res.status(400).json({
+          message: 'Cloudinary authentication failed. Verify cloud name, API key, and API secret.',
+          code: 'cloudinary_auth_failed',
+          detail: rawMsg
+        });
+      }
+      return res.status(502).json({
+        message: 'Failed to fetch resources from Cloudinary',
+        code: 'cloudinary_api_error',
+        detail: rawMsg
+      });
+    }
     return res.json(result);
   } catch (err) {
-    console.error('Cloudinary listResources error:', err);
-    return res.status(500).json({ message: 'Failed to list resources', error: err.message });
+    console.error('[cloudinary][listResources] Unexpected server error:', err?.message || err);
+    return res.status(500).json({ message: 'Failed to list resources', error: err.message || 'unknown_error' });
   }
 };
 
