@@ -15,6 +15,66 @@ import { calculateShippingFee as calcShipFee } from '../services/shippingService
 import DeliveryCompany from '../models/DeliveryCompany.js';
 import { sendToCompany, mapStatus, validateRequiredMappings, validateCompanyConfiguration } from '../services/deliveryIntegrationService.js';
 
+// Update (admin) - update recipient/customer info, shipping address (city/street), status, and optionally shipping fee
+export const updateOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      customerInfo: ci,
+      shippingAddress: sa,
+      status,
+      shippingFee,
+      deliveryFee
+    } = req.body || {};
+
+    const order = await Order.findById(id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    // Update customer info fields if provided
+    if (ci && typeof ci === 'object') {
+      order.customerInfo = {
+        ...order.customerInfo?.toObject?.() || order.customerInfo || {},
+        ...(ci.firstName ? { firstName: ci.firstName } : {}),
+        ...(ci.lastName ? { lastName: ci.lastName } : {}),
+        ...(ci.email ? { email: ci.email } : {}),
+        ...(ci.mobile ? { mobile: ci.mobile } : {}),
+        ...(ci.secondaryMobile ? { secondaryMobile: ci.secondaryMobile } : {})
+      };
+    }
+
+    // Update shipping address (only allow street & city; never allow changing country for now)
+    if (sa && typeof sa === 'object') {
+      const next = { ...(order.shippingAddress || {}) };
+      if (sa.street) next.street = sa.street;
+      if (sa.city) next.city = sa.city; // critical fix for city not persisting
+      order.shippingAddress = next;
+    }
+
+    // Status update
+    if (status && typeof status === 'string' && status !== order.status) {
+      order.status = status;
+    }
+
+    // Optional shipping fee override (mirror logic with pre-save hook)
+    if (typeof shippingFee === 'number' && shippingFee >= 0) {
+      order.shippingFee = shippingFee;
+    } else if (typeof deliveryFee === 'number' && deliveryFee >= 0) {
+      // legacy field
+      order.deliveryFee = deliveryFee;
+    }
+
+    await order.save();
+
+    // Emit real-time event so admin dashboards refresh
+    try { realTimeEventService.emitOrderUpdate(order); } catch {}
+
+    res.json({ message: 'Order updated', order });
+  } catch (error) {
+    console.error('Error updating order (admin):', error);
+    res.status(500).json({ message: 'Failed to update order', error: error?.message });
+  }
+};
+
 // Create order
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
