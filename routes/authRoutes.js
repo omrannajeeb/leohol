@@ -1,5 +1,5 @@
 import express from 'express';
-import { login, register, getCurrentUser, promoteToAdmin, isAdmin } from '../controllers/authController.js';
+import { login, register, getCurrentUser, promoteToAdmin, isAdmin, refresh, logout } from '../controllers/authController.js';
 import { googleAuth } from '../controllers/googleAuthController.js';
 import Settings from '../models/Settings.js';
 import { auth } from '../middleware/auth.js';
@@ -10,6 +10,8 @@ router.post('/login', login);
 router.post('/register', register);
 // Google OAuth (One-Tap / Button) - expects { credential }
 router.post('/google', googleAuth);
+router.post('/refresh', refresh);
+router.post('/logout', auth, logout);
 // Public auth config (currently only Google)
 router.get('/config', async (req, res) => {
 	try {
