@@ -131,8 +131,8 @@ const corsOptions = {
   },
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  // We use Authorization header (no cookies); credentials not required. Keep false so ACAO can be '*'.
-  credentials: false,
+  // We now rely on httpOnly refresh token cookie (rt) for /api/auth/refresh. Enable credentials.
+  credentials: true,
   optionsSuccessStatus: 204
 };
 
