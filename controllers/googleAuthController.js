@@ -1,6 +1,8 @@
 import { OAuth2Client } from 'google-auth-library';
 import User from '../models/User.js';
 import { signUserJwt } from '../utils/jwt.js';
+import crypto from 'crypto';
+import { saveRefreshToken } from '../utils/refreshTokenStore.js';
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -58,10 +60,26 @@ export const googleAuth = async (req, res) => {
       if (modified) await user.save(); else await user.updateOne({ lastLoginAt: user.lastLoginAt });
     }
 
-  const token = signUserJwt(user._id);
+    // Access token (short-lived) and refresh token (longer-lived) for persistence
+    const accessTtl = 60 * 60; // 1h seconds (jwt lib uses human string but we'll sign with default 7d earlier; we override)
+    const accessToken = signUserJwt(user._id, { expiresIn: '1h' });
+    const refreshTtlDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+    const refreshTtlMs = refreshTtlDays * 24 * 60 * 60 * 1000;
+    const refreshToken = crypto.randomBytes(48).toString('hex');
+    saveRefreshToken(refreshToken, user._id.toString(), refreshTtlMs);
+
+    // Send refresh token as HttpOnly cookie
+    res.cookie('rt', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: refreshTtlMs,
+      path: '/api/auth'
+    });
 
     return res.json({
-      token,
+      token: accessToken,
+      expiresIn: accessTtl,
       user: {
         id: user._id,
         name: user.name,
