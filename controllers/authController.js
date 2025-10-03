@@ -14,7 +14,9 @@ function issueTokens(res, userId) {
 
   // Allow overriding cookie SameSite via env. For cross-site (Netlify -> Render) we need SameSite=None; Secure.
   // Default: production => none (cross-site), development => lax for convenience.
-  const cookieSameSite = (process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax')).toLowerCase();
+  const allowCrossSite = ['1','true','yes','on'].includes(String(process.env.ALLOW_CROSS_SITE_COOKIES || '').toLowerCase());
+  let cookieSameSite = (process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax')).toLowerCase();
+  if (allowCrossSite) cookieSameSite = 'none';
   const sameSiteValue = ['lax','strict','none'].includes(cookieSameSite) ? cookieSameSite : 'lax';
 
   res.cookie('rt', refreshToken, {
@@ -205,11 +207,20 @@ export const isAdmin = async (req, res) => {
 export const refresh = async (req, res) => {
   try {
     const rt = req.cookies?.rt;
-    if (!rt) return res.status(401).json({ message: 'Missing refresh token' });
+    if (!rt) {
+      console.warn('[auth][refresh] 401 missing_cookie origin=', req.headers.origin);
+      return res.status(401).json({ message: 'Missing refresh token' });
+    }
     const data = consumeRefreshToken(rt); // we keep multi-use for lifetime; if one-time desired, then delete here.
-    if (!data) return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    if (!data) {
+      console.warn('[auth][refresh] 401 store_miss_or_expired origin=', req.headers.origin);
+      return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    }
     const user = await User.findById(data.userId);
-    if (!user) return res.status(401).json({ message: 'User no longer exists' });
+    if (!user) {
+      console.warn('[auth][refresh] 401 user_not_found userId=', data.userId);
+      return res.status(401).json({ message: 'User no longer exists' });
+    }
     // rotate: revoke user's old tokens if ROTATE_ON_REFRESH=1
     if (process.env.ROTATE_ON_REFRESH === '1') {
       revokeUserTokens(user._id.toString());
