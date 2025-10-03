@@ -6,15 +6,21 @@ import { saveRefreshToken, consumeRefreshToken, revokeUserTokens } from '../util
 import { signUserJwt } from '../utils/jwt.js';
 
 function issueTokens(res, userId) {
-  const accessToken = signUserJwt(userId, { expiresIn: '1h' });
+  const accessToken = signUserJwt(userId, { expiresIn: process.env.ACCESS_TOKEN_TTL || '1h' });
   const refreshTtlDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
   const refreshTtlMs = refreshTtlDays * 24 * 60 * 60 * 1000;
   const refreshToken = crypto.randomBytes(48).toString('hex');
   saveRefreshToken(refreshToken, userId.toString(), refreshTtlMs);
+
+  // Allow overriding cookie SameSite via env. For cross-site (Netlify -> Render) we need SameSite=None; Secure.
+  // Default: production => none (cross-site), development => lax for convenience.
+  const cookieSameSite = (process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax')).toLowerCase();
+  const sameSiteValue = ['lax','strict','none'].includes(cookieSameSite) ? cookieSameSite : 'lax';
+
   res.cookie('rt', refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: sameSiteValue,
     maxAge: refreshTtlMs,
     path: '/api/auth'
   });
