@@ -1,6 +1,25 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import User from '../models/User.js';
+import { saveRefreshToken, consumeRefreshToken, revokeUserTokens } from '../utils/refreshTokenStore.js';
+import { signUserJwt } from '../utils/jwt.js';
+
+function issueTokens(res, userId) {
+  const accessToken = signUserJwt(userId, { expiresIn: '1h' });
+  const refreshTtlDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+  const refreshTtlMs = refreshTtlDays * 24 * 60 * 60 * 1000;
+  const refreshToken = crypto.randomBytes(48).toString('hex');
+  saveRefreshToken(refreshToken, userId.toString(), refreshTtlMs);
+  res.cookie('rt', refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: refreshTtlMs,
+    path: '/api/auth'
+  });
+  return { accessToken, refreshTtlMs };
+}
 
 export const promoteToAdmin = async (req, res) => {
   try {
@@ -56,15 +75,11 @@ export const register = async (req, res) => {
     await user.save();
 
     // Generate token
-    const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const { accessToken } = issueTokens(res, user._id);
 
     // Send response
     res.status(201).json({
-      token,
+      token: accessToken,
       user: {
         id: user._id,
         name: user.name,
@@ -106,10 +121,10 @@ export const login = async (req, res) => {
           provider: 'local'
         });
         await newUser.save();
-        const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        const { accessToken } = issueTokens(res, newUser._id);
         return res.status(201).json({
           autoRegistered: true,
-          token,
+          token: accessToken,
           user: {
             id: newUser._id,
             name: newUser.name,
@@ -131,15 +146,11 @@ export const login = async (req, res) => {
     }
 
     // Generate token
-    const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const { accessToken } = issueTokens(res, user._id);
 
     // Send response
     res.json({
-      token,
+      token: accessToken,
       user: {
         id: user._id,
         name: user.name,
@@ -181,5 +192,40 @@ export const isAdmin = async (req, res) => {
     return res.json({ isAdmin: user.role === 'admin', email: user.email, role: user.role });
   } catch (e) {
     return res.status(500).json({ message: 'Failed to check admin status' });
+  }
+};
+
+// POST /api/auth/refresh - rotate refresh token and issue new access
+export const refresh = async (req, res) => {
+  try {
+    const rt = req.cookies?.rt;
+    if (!rt) return res.status(401).json({ message: 'Missing refresh token' });
+    const data = consumeRefreshToken(rt); // we keep multi-use for lifetime; if one-time desired, then delete here.
+    if (!data) return res.status(401).json({ message: 'Invalid or expired refresh token' });
+    const user = await User.findById(data.userId);
+    if (!user) return res.status(401).json({ message: 'User no longer exists' });
+    // rotate: revoke user's old tokens if ROTATE_ON_REFRESH=1
+    if (process.env.ROTATE_ON_REFRESH === '1') {
+      revokeUserTokens(user._id.toString());
+    }
+    const { accessToken } = issueTokens(res, user._id);
+    return res.json({ token: accessToken, user: { id: user._id, name: user.name, email: user.email, role: user.role, image: user.image || null } });
+  } catch (e) {
+    console.error('Refresh error:', e);
+    return res.status(500).json({ message: 'Failed to refresh session' });
+  }
+};
+
+// POST /api/auth/logout - clear cookie and revoke tokens
+export const logout = async (req, res) => {
+  try {
+    const rt = req.cookies?.rt;
+    if (rt) {
+      revokeUserTokens(req.user?._id?.toString() || '');
+      res.clearCookie('rt', { path: '/api/auth' });
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.json({ ok: true });
   }
 };
