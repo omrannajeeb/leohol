@@ -139,6 +139,32 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+// Reinforce credentials & dynamic origin echo after cors() in case upstream config omits header
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    // Re-run origin allow logic similar to corsOptions.origin
+    let allow = false;
+    try {
+      const u = new URL(origin);
+      if (['localhost','127.0.0.1','::1'].includes(u.hostname)) allow = true;
+    } catch {}
+    const isNetlify = /\.netlify\.(app|live)$/i.test(origin);
+    if (!allow && (isNetlify || allowedOrigins.includes(origin))) allow = true;
+    if (allow) {
+      // Only set ACAO if not already set by cors (avoid header duplication)
+      if (!res.getHeader('Access-Control-Allow-Origin')) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+      }
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      const vary = res.getHeader('Vary');
+      if (!vary) res.setHeader('Vary', 'Origin');
+      else if (!String(vary).includes('Origin')) res.setHeader('Vary', vary + ', Origin');
+    }
+  }
+  next();
+});
+
 // Apply Content Security Policy middleware
 app.use(cspMiddleware);
 
