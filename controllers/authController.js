@@ -206,6 +206,9 @@ export const isAdmin = async (req, res) => {
 // POST /api/auth/refresh - rotate refresh token and issue new access
 export const refresh = async (req, res) => {
   try {
+    if (['1','true','yes','on'].includes(String(process.env.DISABLE_REFRESH_FLOW || '').toLowerCase())) {
+      return res.status(400).json({ message: 'Refresh flow disabled' });
+    }
     const rt = req.cookies?.rt;
     if (!rt) {
       console.warn('[auth][refresh] 401 missing_cookie origin=', req.headers.origin);
