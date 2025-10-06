@@ -1,0 +1,1 @@
+import{e as r}from"./index-MxPgLxWy.js";import"./react-G-HSLdLB.js";import"./vendor-ByivMYyX.js";async function e(t,a,i=!0){return await r.postWithRetry("/whatsapp/links/ids",{userIds:t,message:a,onlyOptIn:i})}export{e as buildLinksForIds};
