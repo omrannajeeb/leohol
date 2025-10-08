@@ -50,28 +50,14 @@ const productSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Category'
   }],
+  // Legacy variant structure (colors with nested sizes). Optional now; new products can omit for simple single-SKU flow.
   colors: [{
-    name: {
-      type: String,
-      required: true
-    },
-    code: {
-      type: String,
-      required: true
-    },
-    images: [{
-      type: String
-    }],
+    name: { type: String },
+    code: { type: String },
+    images: [{ type: String }],
     sizes: [{
-      name: {
-        type: String,
-        required: true
-      },
-      stock: {
-        type: Number,
-        required: true,
-        min: 0
-      }
+      name: { type: String },
+      stock: { type: Number, min: 0 }
     }]
   }],
   isNew: {
@@ -210,14 +196,17 @@ productSchema.pre('save', function(next) {
 // Pre-save middleware to update total stock
 // Recompute aggregate stock from nested colors.sizes each save
 productSchema.pre('save', function(next) {
+  // If legacy variant data exists, derive stock from nested sizes; otherwise keep provided stock untouched.
   if (this.colors && this.colors.length > 0) {
     const total = this.colors.reduce((sum, color) => {
-      if (color.sizes && color.sizes.length) {
-        return sum + color.sizes.reduce((s, sz) => s + (sz.stock || 0), 0);
+      if (color && Array.isArray(color.sizes) && color.sizes.length) {
+        return sum + color.sizes.reduce((s, sz) => s + (Number(sz.stock) || 0), 0);
       }
       return sum;
     }, 0);
-    this.stock = total;
+    if (total > 0) {
+      this.stock = total;
+    }
   }
   next();
 });
