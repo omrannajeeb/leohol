@@ -280,6 +280,9 @@ export const getProduct = async (req, res) => {
 // Create product
 export const createProduct = async (req, res) => {
   try {
+    // NOTE: As of simplification, product creation supports a "simple mode" where
+    // only name, description, price, images[], stock, category (+ optional videoUrls) are required.
+    // Legacy variant creation with colors[]/sizes[] remains supported for backward compatibility.
     // Validate product data
     const { isValid, errors } = validateProductData(req.body);
     if (!isValid) {
@@ -317,13 +320,29 @@ export const createProduct = async (req, res) => {
     if (Array.isArray(req.body.categories)) {
       categoriesArray = req.body.categories.filter(c => c); // simple sanitize
     }
-    const product = new Product({
-      ...req.body,
+    const simpleMode = !Array.isArray(req.body.colors) || req.body.colors.length === 0;
+
+    const baseDoc = {
+      name: req.body.name,
+      description: req.body.description,
+      price: req.body.price,
+      originalPrice: req.body.originalPrice,
+      images: req.body.images,
+      stock: req.body.stock,
+      category: req.body.category,
       categories: categoriesArray,
+      isNew: !!req.body.isNew,
+      isFeatured: !!req.body.isFeatured,
       sizeGuide,
       videoUrls,
       order: req.body.isFeatured ? await Product.countDocuments({ isFeatured: true }) : 0
-    });
+    };
+
+    if (!simpleMode) {
+      baseDoc.colors = req.body.colors; // legacy path
+    }
+
+    const product = new Product(baseDoc);
   let savedProduct = await product.save();
   // Populate categories before responding so client gets names immediately
   savedProduct = await savedProduct.populate(['category','categories']);
@@ -335,32 +354,52 @@ export const createProduct = async (req, res) => {
       warehouse = await Warehouse.create({ name: 'Main Warehouse' });
     }
 
-    // Create inventory records for each color/size
-    let totalQty = 0;
-    const inventoryPromises = (req.body.colors || []).flatMap(color =>
-      (color.sizes || []).map(size => {
-        totalQty += Number(size.stock) || 0;
-        return new Inventory({
-          product: savedProduct._id,
-          size: size.name,
-          color: color.name,
-          quantity: size.stock,
-          warehouse: warehouse._id,
-          location: warehouse.name,
-          lowStockThreshold: 5
-        }).save();
-      })
-    );
-    await Promise.all(inventoryPromises);
+    if (!simpleMode) {
+      // Legacy variant inventory creation
+      let totalQty = 0;
+      const inventoryPromises = (req.body.colors || []).flatMap(color =>
+        (color.sizes || []).map(size => {
+          totalQty += Number(size.stock) || 0;
+          return new Inventory({
+            product: savedProduct._id,
+            size: size.name,
+            color: color.name,
+            quantity: size.stock,
+            warehouse: warehouse._id,
+            location: warehouse.name,
+            lowStockThreshold: 5
+          }).save();
+        })
+      );
+      await Promise.all(inventoryPromises);
 
-    // Create inventory history record
-    await new InventoryHistory({
-      product: savedProduct._id,
-      type: 'increase',
-      quantity: totalQty,
-      reason: 'Initial stock',
-      user: req.user?._id
-    }).save();
+      await new InventoryHistory({
+        product: savedProduct._id,
+        type: 'increase',
+        quantity: totalQty,
+        reason: 'Initial stock',
+        user: req.user?._id
+      }).save();
+    } else {
+      // Simple mode: single inventory record representing total stock (use placeholder variant)
+      const baseQty = Number(req.body.stock) || 0;
+      await new Inventory({
+        product: savedProduct._id,
+        size: 'Default',
+        color: 'Default',
+        quantity: baseQty,
+        warehouse: warehouse._id,
+        location: warehouse.name,
+        lowStockThreshold: 5
+      }).save();
+      await new InventoryHistory({
+        product: savedProduct._id,
+        type: 'increase',
+        quantity: baseQty,
+        reason: 'Initial stock (simple mode)',
+        user: req.user?._id
+      }).save();
+    }
 
   res.status(201).json(savedProduct);
   } catch (error) {
