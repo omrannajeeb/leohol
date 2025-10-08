@@ -22,7 +22,7 @@ function setEnvVar(content, key, value){
 let next = env || '';
 next = setEnvVar(next, 'VAPID_PUBLIC_KEY', keys.publicKey);
 next = setEnvVar(next, 'VAPID_PRIVATE_KEY', keys.privateKey);
-next = setEnvVar(next, 'VAPID_SUBJECT', 'mailto:admin@example.com');
+next = setEnvVar(next, 'VAPID_SUBJECT', 'mailto:ebrahimzahalka123@gmail.com');
 
 fs.writeFileSync(envPath, next, 'utf8');
 
