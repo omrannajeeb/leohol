@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import PushSubscription from '../models/PushSubscription.js';
 import { ApiError } from '../utils/ApiError.js';
 import Settings from '../models/Settings.js';
+import mongoose from 'mongoose';
 
 // Helper duplicated (lightweight) – convert relative asset to absolute for notification icons
 function toAbsolute(req, url) {
@@ -114,3 +115,17 @@ function userFilter(req){
   if (req.user && !('all' in req.query)) return { userId: req.user._id };
   return {};
 }
+
+// Diagnostics: list current authenticated user's push subscriptions (or all if admin & all=true)
+export const listSubscriptions = async (req, res, next) => {
+  try {
+    const filter = userFilter(req);
+    // If admin requests all subs explicitly
+    if (req.user?.role === 'admin' && req.query.all === 'true') {
+      const subs = await PushSubscription.find().select('-__v');
+      return res.json({ total: subs.length, subs });
+    }
+    const subs = await PushSubscription.find(filter).select('-__v');
+    res.json({ total: subs.length, subs });
+  } catch (e) { next(e); }
+};

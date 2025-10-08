@@ -429,17 +429,26 @@ export const createOrder = async (req, res) => {
       const contactEnabled = String(process.env.WHATSAPP_CONTACT_IN_PUSH || 'false').toLowerCase() === 'true';
       const primaryContact = process.env.WHATSAPP_PRIMARY_CONTACT_NUMBER || '';
       const contactLine = (contactEnabled && primaryContact) ? ` • WhatsApp: ${primaryContact}` : '';
+      const icon = '/favicon.svg';
+      const orderAdminUrl = `/admin/orders/${savedOrder._id}`; // more specific deep-link
       const payload = {
         title: 'New Order Received',
         body: `Order ${savedOrder.orderNumber} • ${savedOrder.items.length} item(s) • ${savedOrder.totalAmount} ${savedOrder.currency}${contactLine}`,
-        url: '/admin/orders',
+        url: orderAdminUrl,
         tag: 'new-order',
-        requireInteraction: true
+        requireInteraction: true,
+        icon,
+        badge: icon,
+        silent: false,
+        vibrate: [200,100,200]
       };
+      console.log('[Push][NewOrder] Prepared payload', payload);
       const adminResult = await sendPushToAdmins(payload);
+      console.log('[Push][NewOrder] Admin result', adminResult);
       pushSent = adminResult.sent || 0;
       if (pushSent === 0) {
         const allResult = await sendPushToAll(payload);
+        console.log('[Push][NewOrder] Fallback broadcast result', allResult);
         pushSent = allResult.sent || 0;
       }
     } catch (pushErr) {
