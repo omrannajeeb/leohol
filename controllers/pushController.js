@@ -89,7 +89,8 @@ export const sendTestNotification = async (req, res, next) => {
       requireInteraction: true,
       renotify: true,
       tag: 'store-push',
-      vibrate: [200, 100, 200]
+      vibrate: [200, 100, 200],
+      playSound: true
     });
 
     const results = await Promise.allSettled(subs.map(s => webpush.sendNotification(s, payload)));
