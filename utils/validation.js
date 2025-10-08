@@ -63,10 +63,12 @@ export function validateProductData(data) {
     errors.push('Category is required');
   }
 
-  // Validate colors, images, and sizes (nested)
-  if (!Array.isArray(data.colors) || data.colors.length === 0) {
-    errors.push('At least one color is required');
-  } else {
+  // Two creation modes are supported now:
+  // 1) Legacy variant-based creation (colors + sizes nested with images inside each color)
+  // 2) Simple creation (no colors/sizes) where top-level images[] + stock are provided.
+  const hasColorsArray = Array.isArray(data.colors) && data.colors.length > 0;
+
+  if (hasColorsArray) {
     let hasAtLeastOneImage = false;
     let hasAtLeastOneSize = false;
     data.colors.forEach((color, colorIdx) => {
@@ -102,6 +104,14 @@ export function validateProductData(data) {
     }
     if (!hasAtLeastOneSize) {
       errors.push('At least one size is required (in any color)');
+    }
+  } else {
+    // Simple mode validation
+    if (!Array.isArray(data.images) || data.images.length === 0) {
+      errors.push('At least one product image is required');
+    }
+    if (data.stock == null || isNaN(Number(data.stock)) || Number(data.stock) < 0) {
+      errors.push('Valid stock quantity is required');
     }
   }
 
