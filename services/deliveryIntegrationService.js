@@ -229,6 +229,11 @@ export function buildPayloadFromMappings(order, company) {
       // This ignores sourceField and relies on order state.
       const status = String(getByPath(order, 'paymentStatus') || '').toLowerCase();
       value = status === 'completed';
+    } else if (m.transform === 'is_paid_online') {
+      // True only when payment was captured online (non-COD) and completed.
+      const status = String(getByPath(order, 'paymentStatus') || '').toLowerCase();
+      const method = String(getByPath(order, 'paymentMethod') || '').toLowerCase();
+      value = status === 'completed' && (method === 'card' || method === 'paypal');
     } else if (m.transform === 'is_cod') {
       // Convenience: true when paymentMethod is 'cod'
       const method = String(getByPath(order, 'paymentMethod') || '').toLowerCase();
