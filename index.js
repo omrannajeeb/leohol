@@ -446,6 +446,14 @@ const startServer = async () => {
     } catch (e) {
       console.warn('Delivery company seeding skipped:', e.message);
     }
+    // Apply paid mapping to all delivery companies (idempotent)
+    try {
+      const { applyPaidMappingToAllCompanies } = await import('./scripts/applyPaidMapping.js');
+      const res = await applyPaidMappingToAllCompanies();
+      console.log(`Delivery paid mapping ensured for companies: updated=${res.updated}/${res.total}`);
+    } catch (e) {
+      console.warn('Paid mapping migration skipped:', e.message);
+    }
     
     
 
