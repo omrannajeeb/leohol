@@ -264,6 +264,17 @@ export function buildPayloadFromMappings(order, company) {
     });
   }
 
+  // Optional injection via environment: ensure a boolean paid flag is present
+  // If DELIVERY_PAID_FIELD (or DELIVERY_PAID_TARGET) is set to a key name and it wasn't
+  // already filled by mappings above, inject computed paid boolean (paymentStatus === 'completed').
+  try {
+    const paidTarget = process.env.DELIVERY_PAID_FIELD || process.env.DELIVERY_PAID_TARGET;
+    if (paidTarget && payload[paidTarget] === undefined) {
+      const status = String((order && order.paymentStatus) || '').toLowerCase();
+      payload[paidTarget] = status === 'completed';
+    }
+  } catch {}
+
   return payload;
 }
 
