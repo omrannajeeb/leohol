@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const doc = await PageLayout.getOrCreate();
-    res.json({ sections: doc.sections });
+    res.json({ sections: doc.sections, sectionGap: doc.sectionGap });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -22,25 +22,28 @@ const updateGuard = REQUIRE_ADMIN ? adminAuth : auth;
 // Replace all sections (guarded)
 router.put('/', updateGuard, async (req, res) => {
   try {
-    const { sections } = req.body || {};
+    const { sections, sectionGap } = req.body || {};
     if (!Array.isArray(sections)) {
       return res.status(400).json({ message: 'Invalid payload: sections must be an array' });
+    }
+    if (sectionGap !== undefined && (typeof sectionGap !== 'number' || sectionGap < 0 || sectionGap > 64)) {
+      return res.status(400).json({ message: 'Invalid sectionGap' });
     }
 
     const doc = await PageLayout.getOrCreate();
     doc.sections = sections;
+    if (typeof sectionGap === 'number') doc.sectionGap = sectionGap;
     doc.markModified('sections');
     await doc.save();
 
-    // Optionally broadcast change to clients (if using websockets)
     try {
       const broadcast = req.app.get('broadcastToClients');
       if (typeof broadcast === 'function') {
-        broadcast({ type: 'layout_updated', data: { sections } });
+        broadcast({ type: 'layout_updated', data: { sections: doc.sections, sectionGap: doc.sectionGap } });
       }
     } catch {}
 
-    res.json({ sections: doc.sections });
+    res.json({ sections: doc.sections, sectionGap: doc.sectionGap });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

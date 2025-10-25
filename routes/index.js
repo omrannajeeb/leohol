@@ -13,6 +13,8 @@ import footerRoutes from './footerRoutes.js';
 import announcementRoutes from './announcementRoutes.js';
 import backgroundRoutes from './backgroundRoutes.js';
 import bannerRoutes from './bannerRoutes.js';
+import uploadRoutes from './uploadRoutes.js';
+import maintenanceRoutes from './maintenanceRoutes.js';
 
 
 
@@ -40,6 +42,8 @@ router.use('/footer', footerRoutes);
 router.use('/announcements', announcementRoutes);
 router.use('/backgrounds', backgroundRoutes);
 router.use('/banners', bannerRoutes);
+router.use('/uploads', uploadRoutes);
+router.use('/maintenance', maintenanceRoutes);
 
 router.use('/inventory', inventoryRoutes);
 
