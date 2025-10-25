@@ -1,13 +1,6 @@
 import Order from '../models/Order.js';
 import { getPayPalClient, paypalSdk } from '../services/paypalClient.js';
 
-// Helper to standardize server error responses while preserving internal diagnostics in logs
-function respondServerError(res, context, err, fallbackMessage) {
-  // Prefer a safe message (never leak secrets) while logging full detail server-side
-  console.error(`[PayPal] ${context} ::`, err?.message, err?.response?.status || '', err?.response?.data || '', err?.stack);
-  return res.status(500).json({ message: fallbackMessage });
-}
-
 // Create a PayPal order based on a local Order document
 export const createPayPalOrder = async (req, res) => {
   try {
@@ -17,22 +10,12 @@ export const createPayPalOrder = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    // Validate numeric total
-    if (typeof order.totalAmount !== 'number' || isNaN(order.totalAmount) || order.totalAmount <= 0) {
-      return res.status(400).json({ message: 'Order total is invalid' });
-    }
-
     // Only allow creating PayPal order for pending, unpaid orders
     if (order.paymentStatus === 'completed') {
       return res.status(400).json({ message: 'Order is already paid' });
     }
 
-    let client;
-    try {
-      client = await getPayPalClient();
-    } catch (err) {
-      return respondServerError(res, 'getPayPalClient(create)', err, 'Payment gateway not configured');
-    }
+  const client = await getPayPalClient();
 
     const request = new paypalSdk.orders.OrdersCreateRequest();
     request.prefer('return=representation');
@@ -53,25 +36,17 @@ export const createPayPalOrder = async (req, res) => {
       ]
     });
 
-    let response;
-    try {
-      response = await client.execute(request);
-    } catch (err) {
-      return respondServerError(res, 'client.execute(createOrder)', err, 'Failed to create PayPal order');
-    }
+    const response = await client.execute(request);
 
-    // Save PayPal order id reference (ignore save errors separately)
-    try {
-      order.paymentMethod = 'paypal';
-      order.paymentReference = response.result.id;
-      await order.save();
-    } catch (err) {
-      console.error('[PayPal] Failed saving order after create', err);
-    }
+    // Save PayPal order id reference
+    order.paymentMethod = 'paypal';
+    order.paymentReference = response.result.id;
+    await order.save();
 
     res.json({ id: response.result.id, status: response.result.status, links: response.result.links });
   } catch (err) {
-    return respondServerError(res, 'createPayPalOrder(unhandled)', err, 'Failed to create PayPal order');
+    console.error('Error creating PayPal order:', err);
+    res.status(500).json({ message: 'Failed to create PayPal order' });
   }
 };
 
@@ -81,22 +56,11 @@ export const capturePayPalOrder = async (req, res) => {
     const { paypalOrderId } = req.body;
     if (!paypalOrderId) return res.status(400).json({ message: 'paypalOrderId is required' });
 
-    let client;
-    try {
-      client = await getPayPalClient();
-    } catch (err) {
-      return respondServerError(res, 'getPayPalClient(capture)', err, 'Payment gateway not configured');
-    }
-
+  const client = await getPayPalClient();
     const request = new paypalSdk.orders.OrdersCaptureRequest(paypalOrderId);
     request.requestBody({});
 
-    let capture;
-    try {
-      capture = await client.execute(request);
-    } catch (err) {
-      return respondServerError(res, 'client.execute(capture)', err, 'Failed to capture PayPal order');
-    }
+    const capture = await client.execute(request);
 
     const referenceId = capture?.result?.purchase_units?.[0]?.reference_id;
     const status = capture?.result?.status;
@@ -122,6 +86,7 @@ export const capturePayPalOrder = async (req, res) => {
     await order.save();
     return res.status(400).json({ message: 'Payment not completed', status });
   } catch (err) {
-    return respondServerError(res, 'capturePayPalOrder(unhandled)', err, 'Failed to capture PayPal order');
+    console.error('Error capturing PayPal order:', err);
+    res.status(500).json({ message: 'Failed to capture PayPal order' });
   }
 };

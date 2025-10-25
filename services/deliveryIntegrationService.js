@@ -224,6 +224,15 @@ export function buildPayloadFromMappings(order, company) {
         ? items.map(item => item.name).filter(Boolean)
         : [];
       value = names.length ? names.join(', ') : '';
+    } else if (m.transform === 'is_paid') {
+      // Compute boolean paid flag: true when paymentStatus is 'completed'.
+      // This ignores sourceField and relies on order state.
+      const status = String(getByPath(order, 'paymentStatus') || '').toLowerCase();
+      value = status === 'completed';
+    } else if (m.transform === 'is_cod') {
+      // Convenience: true when paymentMethod is 'cod'
+      const method = String(getByPath(order, 'paymentMethod') || '').toLowerCase();
+      value = method === 'cod';
     }
     if (value !== undefined) payload[m.targetField] = value;
   }

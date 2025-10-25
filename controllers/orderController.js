@@ -24,7 +24,9 @@ export const updateOrder = async (req, res) => {
       shippingAddress: sa,
       status,
       shippingFee,
-      deliveryFee
+      deliveryFee,
+      paymentStatus,
+      paymentReference
     } = req.body || {};
 
     const order = await Order.findById(id);
@@ -53,6 +55,19 @@ export const updateOrder = async (req, res) => {
     // Status update
     if (status && typeof status === 'string' && status !== order.status) {
       order.status = status;
+    }
+
+    // Payment status update (admin override)
+    if (typeof paymentStatus === 'string') {
+      const allowed = ['pending', 'completed', 'failed'];
+      if (!allowed.includes(paymentStatus)) {
+        return res.status(400).json({ message: 'Invalid payment status' });
+      }
+      order.paymentStatus = paymentStatus;
+    }
+    // Optional payment reference save if provided
+    if (typeof paymentReference === 'string' && paymentReference.trim()) {
+      order.paymentReference = paymentReference.trim();
     }
 
     // Optional shipping fee override (mirror logic with pre-save hook)

@@ -1,20 +1,9 @@
-// Real-time event service. Startup is now deferred until after a successful DB connection
-// to prevent mongoose buffering timeouts during initial deployment when the database URI
-// is missing or connectivity is delayed.
-
-// We avoid importing from index.js directly (which caused a circular import and premature
-// interval creation) by using an injected broadcaster function. Until it's set, broadcasts
-// are safely no-ops.
-
-let broadcastFn = () => {};
-export function setBroadcaster(fn) {
-  if (typeof fn === 'function') broadcastFn = fn;
-}
+import { broadcastToClients } from '../index.js';
 
 class RealTimeEventService {
   // Emit new order event
   emitNewOrder(order) {
-  broadcastFn({
+    broadcastToClients({
       type: 'new_order',
       data: {
         type: 'new_order',
@@ -37,7 +26,7 @@ class RealTimeEventService {
 
   // Emit order status update
   emitOrderUpdate(order) {
-  broadcastFn({
+    broadcastToClients({
       type: 'order_updated',
       data: {
         type: 'order_updated',
@@ -60,7 +49,7 @@ class RealTimeEventService {
 
   // Emit sales update
   emitSalesUpdate(salesData) {
-  broadcastFn({
+    broadcastToClients({
       type: 'sales_update',
       data: {
         type: 'sales_update',
@@ -73,7 +62,7 @@ class RealTimeEventService {
 
   // Emit inventory alert
   emitInventoryAlert(alert) {
-  broadcastFn({
+    broadcastToClients({
       type: 'inventory_alert',
       data: {
         message: alert.message,
@@ -88,7 +77,7 @@ class RealTimeEventService {
 
   // Emit system notification
   emitSystemNotification(notification) {
-  broadcastFn({
+    broadcastToClients({
       type: 'system_notification',
       data: notification
     });
@@ -217,14 +206,7 @@ class RealTimeEventService {
 
 export const realTimeEventService = new RealTimeEventService();
 
-let started = false;
-export function startRealTimeEventService() {
-  if (started) return;
-  try {
-    realTimeEventService.startPeriodicUpdates();
-    realTimeEventService.startInventoryAlerts();
-    started = true;
-  } catch (e) {
-    console.error('Failed to start real-time event service:', e);
-  }
-}
+// Start demo updates when the module is loaded
+// Comment these out in production
+realTimeEventService.startPeriodicUpdates();
+realTimeEventService.startInventoryAlerts();
