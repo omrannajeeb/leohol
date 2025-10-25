@@ -23,7 +23,9 @@ export async function createTestDeliveryCompany() {
         { sourceField: 'customerInfo.mobile', targetField: 'phone', required: true },
         { sourceField: 'shippingAddress.street', targetField: 'street', required: true },
         { sourceField: 'shippingAddress.city', targetField: 'city', required: true },
-        { sourceField: 'shippingAddress.country', targetField: 'country', required: true }
+        { sourceField: 'shippingAddress.country', targetField: 'country', required: true },
+  // Paid flag: true only if online payment captured (paymentStatus==='completed' AND paymentMethod in ['card','paypal'])
+  { sourceField: 'paymentStatus', targetField: 'paid', transform: 'is_paid_online', required: false, enabled: true }
       ],
       statusMapping: [
         { companyStatus: 'created', internalStatus: 'assigned' },

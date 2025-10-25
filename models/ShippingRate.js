@@ -6,6 +6,12 @@ const shippingRateSchema = new mongoose.Schema({
     ref: 'ShippingZone',
     required: [true, 'Shipping zone is required']
   },
+  // Optional: limit this rate to specific cities inside a zone's countries/regions
+  cities: [{
+    name: { type: String, trim: true },
+    // Allow overriding cost per city (applies to flat_rate / percentage / free when provided)
+    cost: { type: Number, min: 0 }
+  }],
   name: {
     type: String,
     required: [true, 'Rate name is required'],
@@ -154,6 +160,18 @@ shippingRateSchema.statics.findByZone = function(zoneId) {
     zone: zoneId,
     isActive: true
   }).populate('zone');
+};
+
+// Find rates that include a given city name (case-insensitive) optionally within a zone list
+shippingRateSchema.statics.findByCity = function(cityName, zoneIds = []) {
+  const query = {
+    isActive: true,
+    cities: { $elemMatch: { name: new RegExp(`^${cityName}$`, 'i') } }
+  };
+  if (zoneIds.length) {
+    query.zone = { $in: zoneIds };
+  }
+  return this.find(query).populate('zone');
 };
 
 export default mongoose.model('ShippingRate', shippingRateSchema);

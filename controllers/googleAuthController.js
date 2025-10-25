@@ -61,18 +61,26 @@ export const googleAuth = async (req, res) => {
     }
 
     // Access token (short-lived) and refresh token (longer-lived) for persistence
-    const accessTtl = 60 * 60; // 1h seconds (jwt lib uses human string but we'll sign with default 7d earlier; we override)
-    const accessToken = signUserJwt(user._id, { expiresIn: '1h' });
-    const refreshTtlDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+    const accessTtl = 60 * 60; // 1h seconds (for client info)
+    const accessToken = signUserJwt(user._id, { expiresIn: process.env.ACCESS_TOKEN_TTL || '1h' });
+    const adminDays = parseInt(process.env.ADMIN_REFRESH_TOKEN_DAYS || '3650', 10);
+    const normalDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+    const refreshTtlDays = user.role === 'admin' ? adminDays : normalDays;
     const refreshTtlMs = refreshTtlDays * 24 * 60 * 60 * 1000;
-    const refreshToken = crypto.randomBytes(48).toString('hex');
-    saveRefreshToken(refreshToken, user._id.toString(), refreshTtlMs);
+  const refreshToken = crypto.randomBytes(48).toString('hex');
+  await saveRefreshToken(refreshToken, user._id.toString(), refreshTtlMs);
+
+    // Cookie attributes (align with authController)
+    const allowCrossSite = ['1','true','yes','on'].includes(String(process.env.ALLOW_CROSS_SITE_COOKIES || '').toLowerCase());
+    let cookieSameSite = (process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax')).toLowerCase();
+    if (allowCrossSite) cookieSameSite = 'none';
+    const sameSiteValue = ['lax','strict','none'].includes(cookieSameSite) ? cookieSameSite : 'lax';
 
     // Send refresh token as HttpOnly cookie
     res.cookie('rt', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: sameSiteValue,
       maxAge: refreshTtlMs,
       path: '/api/auth'
     });

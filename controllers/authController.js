@@ -5,12 +5,15 @@ import User from '../models/User.js';
 import { saveRefreshToken, consumeRefreshToken, revokeUserTokens } from '../utils/refreshTokenStore.js';
 import { signUserJwt } from '../utils/jwt.js';
 
-function issueTokens(res, userId) {
+async function issueTokens(res, userId, isAdmin = false) {
   const accessToken = signUserJwt(userId, { expiresIn: process.env.ACCESS_TOKEN_TTL || '1h' });
-  const refreshTtlDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+  // Admins can have a much longer refresh lifespan to effectively "never expire"
+  const adminDays = parseInt(process.env.ADMIN_REFRESH_TOKEN_DAYS || '3650', 10); // ~10 years
+  const normalDays = parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10);
+  const refreshTtlDays = isAdmin ? adminDays : normalDays;
   const refreshTtlMs = refreshTtlDays * 24 * 60 * 60 * 1000;
   const refreshToken = crypto.randomBytes(48).toString('hex');
-  saveRefreshToken(refreshToken, userId.toString(), refreshTtlMs);
+  await saveRefreshToken(refreshToken, userId.toString(), refreshTtlMs);
 
   // Allow overriding cookie SameSite via env. For cross-site (Netlify -> Render) we need SameSite=None; Secure.
   // Default: production => none (cross-site), development => lax for convenience.
@@ -83,7 +86,7 @@ export const register = async (req, res) => {
     await user.save();
 
     // Generate token
-    const { accessToken } = issueTokens(res, user._id);
+  const { accessToken } = await issueTokens(res, user._id, user.role === 'admin');
 
     // Send response
     res.status(201).json({
@@ -129,7 +132,7 @@ export const login = async (req, res) => {
           provider: 'local'
         });
         await newUser.save();
-        const { accessToken } = issueTokens(res, newUser._id);
+  const { accessToken } = await issueTokens(res, newUser._id, false);
         return res.status(201).json({
           autoRegistered: true,
           token: accessToken,
@@ -154,7 +157,7 @@ export const login = async (req, res) => {
     }
 
     // Generate token
-    const { accessToken } = issueTokens(res, user._id);
+  const { accessToken } = await issueTokens(res, user._id, user.role === 'admin');
 
     // Send response
     res.json({
@@ -214,7 +217,7 @@ export const refresh = async (req, res) => {
       console.warn('[auth][refresh] 401 missing_cookie origin=', req.headers.origin);
       return res.status(401).json({ message: 'Missing refresh token' });
     }
-    const data = consumeRefreshToken(rt); // we keep multi-use for lifetime; if one-time desired, then delete here.
+  const data = await consumeRefreshToken(rt); // multi-use until expiry
     if (!data) {
       console.warn('[auth][refresh] 401 store_miss_or_expired origin=', req.headers.origin);
       return res.status(401).json({ message: 'Invalid or expired refresh token' });
@@ -228,7 +231,7 @@ export const refresh = async (req, res) => {
     if (process.env.ROTATE_ON_REFRESH === '1') {
       revokeUserTokens(user._id.toString());
     }
-    const { accessToken } = issueTokens(res, user._id);
+  const { accessToken } = await issueTokens(res, user._id, user.role === 'admin');
     return res.json({ token: accessToken, user: { id: user._id, name: user.name, email: user.email, role: user.role, image: user.image || null } });
   } catch (e) {
     console.error('Refresh error:', e);

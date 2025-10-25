@@ -1,42 +1,44 @@
-// In-memory refresh token store (can be replaced by Redis or database collection later)
-// Maps refresh token -> { userId, exp }
-// NOTE: Survives only for process lifetime; for production deploy to persistent/central store.
-const store = new Map();
+// Persistent refresh token store backed by MongoDB (via Mongoose)
+// Stores hashed token values to avoid leaking raw tokens if DB is compromised.
+import crypto from 'crypto';
+import RefreshToken from '../models/RefreshToken.js';
 
-export function saveRefreshToken(token, userId, ttlMs) {
-  const exp = Date.now() + ttlMs;
-  store.set(token, { userId, exp });
+function hash(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
-export function consumeRefreshToken(token) {
-  const data = store.get(token);
-  if (!data) return null;
-  if (Date.now() > data.exp) {
-    store.delete(token);
-    return null;
-  }
-  return data; // one-time or multi-use? keep multi-use until expiry.
+export async function saveRefreshToken(token, userId, ttlMs) {
+  const tokenHash = hash(token);
+  const expiresAt = new Date(Date.now() + ttlMs);
+  // Upsert to allow reissuing same token rarely (not typical), else simply create new
+  await RefreshToken.findOneAndUpdate(
+    { tokenHash },
+    { tokenHash, userId, expiresAt, revokedAt: null },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
-export function revokeToken(token) {
-  store.delete(token);
+export async function consumeRefreshToken(token) {
+  const tokenHash = hash(token);
+  const doc = await RefreshToken.findOne({ tokenHash });
+  if (!doc) return null;
+  if (doc.revokedAt) return null;
+  if (doc.expiresAt && doc.expiresAt.getTime() < Date.now()) return null;
+  return { userId: doc.userId, exp: doc.expiresAt?.getTime() || 0 };
 }
 
-export function revokeUserTokens(userId) {
-  for (const [t, v] of store.entries()) {
-    if (v.userId === userId) store.delete(t);
-  }
+export async function revokeToken(token) {
+  const tokenHash = hash(token);
+  await RefreshToken.updateOne({ tokenHash }, { $set: { revokedAt: new Date() } });
+}
+
+export async function revokeUserTokens(userId) {
+  await RefreshToken.updateMany({ userId }, { $set: { revokedAt: new Date() } });
 }
 
 export function cleanupExpired() {
-  const now = Date.now();
-  for (const [t, v] of store.entries()) {
-    if (v.exp < now) store.delete(t);
-  }
+  // No-op: TTL index on expiresAt handles cleanup automatically
 }
-
-// Periodic cleanup
-setInterval(cleanupExpired, 10 * 60 * 1000).unref();
 
 export default {
   saveRefreshToken,
